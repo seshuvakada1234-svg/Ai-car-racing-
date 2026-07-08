@@ -1,0 +1,69 @@
+{
+  "version": "1.0.0",
+  "totalSize": "96.9 MB",
+  "assets": [
+    {
+      "id": "ferrari_purosangue",
+      "name": "Ferrari Purosangue Line (19.5 MB)",
+      "version": "1.0.0",
+      "size": 19540648,
+      "url": "/__l5e/assets-v1/739ced4e-0592-4e92-a92f-12a25c0fa39d/ferrari_purosangue.glb",
+      "checksum": "sha256-puro2023fake",
+      "category": "cars"
+    },
+    {
+      "id": "bugatti_chiron_top_edition",
+      "name": "Bugatti Chiron Super Sport (16.5 MB)",
+      "version": "1.0.0",
+      "size": 16468544,
+      "url": "/__l5e/assets-v1/8a7d6d83-517d-4dbd-baa7-7a1388d90160/bugatti_chiron.glb",
+      "checksum": "sha256-chironssfake",
+      "category": "cars"
+    },
+    {
+      "id": "porsche_911_gt3",
+      "name": "Porsche 911 GT3 RS Touring (17.6 MB)",
+      "version": "1.0.0",
+      "size": 17589288,
+      "url": "/__l5e/assets-v1/579644d1-cc65-47dc-9f73-87e81379d172/porsche_911_gt3.glb",
+      "checksum": "sha256-911gt3rstfake",
+      "category": "cars"
+    },
+    {
+      "id": "dragon_mountain_map",
+      "name": "Dragon Mountain Apex Map (42.1 MB)",
+      "version": "1.0.0",
+      "size": 44145049,
+      "url": "https://pub-a248afed72844944a7565dc9cbaacbb0.r2.dev/assets/maps/dragon_mountain.glb",
+      "checksum": "sha256-dragontrack92",
+      "category": "maps"
+    },
+    {
+      "id": "coastal_sunset_track",
+      "name": "Coastal Sunset Beach Track (15.4 MB)",
+      "version": "1.0.0",
+      "size": 16148070,
+      "url": "https://pub-a248afed72844944a7565dc9cbaacbb0.r2.dev/assets/maps/coastal_sunset.glb",
+      "checksum": "sha256-coastalbeach44",
+      "category": "maps"
+    },
+    {
+      "id": "environmental_textures",
+      "name": "High Dynamic Range Textures (12.0 MB)",
+      "version": "1.0.1",
+      "size": 12582912,
+      "url": "https://pub-a248afed72844944a7565dc9cbaacbb0.r2.dev/assets/textures/env_hdr_sky.png",
+      "checksum": "sha256-hdrenv9929",
+      "category": "textures"
+    },
+    {
+      "id": "engine_audio_sounds",
+      "name": "High Fidelity Engine Audio Loops (5.5 MB)",
+      "version": "1.0.0",
+      "size": 5767168,
+      "url": "https://pub-a248afed72844944a7565dc9cbaacbb0.r2.dev/assets/audio/engine_loop.mp3",
+      "checksum": "sha256-soundloop8820",
+      "category": "audio"
+    }
+  ]
+}

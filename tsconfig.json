@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false,
+    "module": "ESNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "allowJs": true,
+    "jsx": "react-jsx",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "noImplicitAny": false,
+    "strict": false,
+    "types": ["vite/client"]
+  },
+  "include": ["src"],
+  "exclude": [
+    "server.ts",
+    "src/server.ts",
+    "src/start.ts",
+    "src/router.tsx",
+    "src/routes",
+    "src/routeTree.gen.ts",
+    "src/multiplayer/multiplayerServer.ts",
+    "node_modules",
+    "dist"
+  ]
+}

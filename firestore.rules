@@ -1,0 +1,189 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Standard high-quality reusable helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && (request.auth.token.get('email_verified', false) == true || 'email' in request.auth.token);
+    }
+
+    function isUserRole(role) {
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'user') == role;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (isEmailVerified() && request.auth.token.get('email', '') in ['seshuvakada1234@gmail.com', 'resumepro.ads@gmail.com']) ||
+        isUserRole('admin')
+      );
+    }
+
+    function isBroadcaster() {
+      return isSignedIn() && (
+        (isEmailVerified() && request.auth.token.get('email', '') in ['seshuvakada522@gmail.com', 'seshuvakada5@gmail.com']) ||
+        isAdmin() ||
+        isUserRole('broadcaster')
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function getExpectedRole(email) {
+      return (email == 'seshuvakada1234@gmail.com' || email == 'resumepro.ads@gmail.com') ? 'admin' :
+             (email == 'seshuvakada522@gmail.com' || email == 'seshuvakada5@gmail.com') ? 'broadcaster' :
+             'user';
+    }
+
+    // USERS COLLECTION
+    match /users/{userId} {
+      // Individual users can retrieve their own profiles.
+      allow get: if isSignedIn() && request.auth.uid == userId;
+
+      // Admins & broadcasters can read profiles.
+      allow get: if isSignedIn() && (isAdmin() || isBroadcaster());
+
+      // Only admins have search/listing privileges over all user email/PII profiles
+      allow list: if isAdmin();
+
+      // On creation, we validate the profile maps exactly to their verified auth registration email and role
+      allow create: if isSignedIn() && request.auth.uid == userId && 
+                    'email' in request.auth.token &&
+                    request.resource.data.role == getExpectedRole(request.auth.token.email) && 
+                    request.resource.data.email == request.auth.token.email;
+
+      // Allow users to update their own profiles (e.g. displayName/photo) but protect against unauthorized privilege escalations
+      allow update: if isSignedIn() && request.auth.uid == userId && 
+                    'email' in request.auth.token &&
+                    (request.resource.data.role == resource.data.role || request.resource.data.role == getExpectedRole(request.auth.token.email)) && 
+                    request.resource.data.email == resource.data.email;
+
+      // Admins can perform structural updates on users
+      allow update: if isAdmin();
+
+      // Accounts can only be deleted by System Administrators
+      allow delete: if isAdmin();
+    }
+
+    // LEADERBOARDS COLLECTION
+    match /leaderboards/{docId} {
+      // Leaderboard highscores are publicly queryable by authenticated users
+      allow read, list: if isSignedIn();
+
+      // Authenticated racers can request addition of racing scorecard
+      allow create: if isSignedIn() && 
+                    request.resource.data.keys().hasAll(['playerName', 'selectedCar', 'topSpeed', 'createdAt']) &&
+                    request.resource.data.keys().size() == 4 &&
+                    request.resource.data.topSpeed is int &&
+                    request.resource.data.topSpeed >= 0 &&
+                    request.resource.data.topSpeed <= 1000 &&
+                    request.resource.data.playerName is string &&
+                    request.resource.data.playerName.size() <= 100 &&
+                    request.resource.data.selectedCar is string &&
+                    request.resource.data.selectedCar.size() <= 100 &&
+                    request.resource.data.createdAt == request.time;
+
+      // Restrict update modifications (scores are immutable)
+      allow update: if false;
+
+      // Only admins can delete/clean up records
+      allow delete: if isAdmin();
+    }
+
+    // MAPS COLLECTION
+    match /maps/{mapId} {
+      // Racing tracks can be listed by any racer
+      allow read, list: if isSignedIn();
+
+      // Creation/Update/Deletion are Admin operations
+      allow create, update, delete: if isAdmin();
+    }
+
+    // CARS COLLECTION
+    match /cars/{carId} {
+      // Vehicle garage details are readable by anyone
+      allow read, list: if isSignedIn();
+
+      // Setup/Engineering updates on cars are Admin operations
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ROOMS COLLECTION (Multiplayer Matched Staging Lobbies)
+    match /rooms/{roomId} {
+      // Racers can read or join any custom rooms directly via the lobby search/join overlay
+      allow get: if isSignedIn();
+
+      // Room directory listing is locked to Admins and Broadcasters to display active live streams
+      allow list: if isSignedIn() && (isAdmin() || isBroadcaster());
+
+      // Creators/Hosts can open/provision a new room
+      allow create: if isSignedIn() && 
+                    request.resource.data.hostId == request.auth.uid;
+
+      // Allow room states to be synchronized (e.g. lobby members, vehicle speed coordinates)
+      allow update: if isSignedIn() && (
+        request.auth.uid == resource.data.hostId || 
+        isAdmin() || 
+        isBroadcaster() ||
+        // Let peers input their custom join properties safely matching the host guidelines
+        (request.resource.data.hostId == resource.data.hostId)
+      );
+
+      // Closing/purging a room is reserved for the Host or Admin
+      allow delete: if isSignedIn() && (
+        request.auth.uid == resource.data.hostId || 
+        isAdmin()
+      );
+
+      // Dedicated rules for players subcollection
+      match /players/{uid} {
+        allow read, write: if isSignedIn();
+      }
+    }
+    
+    // LIVE COLLECTION (Broadcaster Live Syncing Metadata)
+    match /live/{docId} {
+      // Live current details are publicly queryable by authenticated users so they can auto-join
+      allow read, get: if isSignedIn();
+
+      // Only broadcaster or admin can write/update/delete live states
+      allow write, create, update, delete: if isSignedIn() && (isAdmin() || isBroadcaster());
+    }
+
+    // ACTIVITY COLLECTION (Admin and Broadcaster Logs)
+    match /activity/{docId} {
+      allow read, list, create: if isSignedIn() && (isAdmin() || isBroadcaster());
+      allow update, delete: if isAdmin();
+    }
+
+    // BROADCASTS COLLECTION (Video Transmission Feeds)
+    match /broadcasts/{feedId} {
+      allow read, list: if isSignedIn();
+      allow write, create, update, delete: if isSignedIn() && (isAdmin() || isBroadcaster());
+    }
+
+    // SETTINGS COLLECTION (Platform Matchmaker Configurations)
+    match /settings/{docId} {
+      allow read, list: if isSignedIn();
+      allow write, create, update, delete: if isAdmin();
+    }
+
+    // INVITATIONS COLLECTION (Pre-Allocated Operator Privileges)
+    match /invitations/{docId} {
+      allow read, list: if isSignedIn() && (isAdmin() || isBroadcaster());
+      allow write, create, update, delete: if isAdmin();
+    }
+  }
+}

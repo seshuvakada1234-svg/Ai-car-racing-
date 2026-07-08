@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>AI Racing</title>
+    <script>
+      (function() {
+        function logError(details) {
+          try {
+            fetch('/api/log-error', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(details)
+            });
+          } catch(e) {}
+        }
+
+        window.onerror = function(message, source, lineno, colno, error) {
+          logError({
+            type: 'onerror',
+            message: message,
+            source: source,
+            lineno: lineno,
+            colno: colno,
+            stack: error ? error.stack : null
+          });
+        };
+
+        window.addEventListener('unhandledrejection', function(event) {
+          logError({
+            type: 'unhandledrejection',
+            reason: event.reason ? (event.reason.message || String(event.reason)) : null,
+            stack: event.reason ? event.reason.stack : null
+          });
+        });
+
+        var originalConsoleError = console.error;
+        console.error = function() {
+          originalConsoleError.apply(console, arguments);
+          var args = Array.prototype.slice.call(arguments).map(function(arg) {
+            if (arg instanceof Error) {
+              return { message: arg.message, stack: arg.stack };
+            }
+            if (typeof arg === 'object') {
+              try { return JSON.stringify(arg); } catch(e) { return String(arg); }
+            }
+            return String(arg);
+          });
+          logError({
+            type: 'console_error',
+            arguments: args
+          });
+        };
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

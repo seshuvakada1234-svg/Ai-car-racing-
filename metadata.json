@@ -1,0 +1,6 @@
+{
+  "name": "Asphalt Champions",
+  "description": "Premium High-Fidelity 3D Multiplayer Racing Game Arena featuring full Role-Based Access Control (RBAC) via Firebase Auth/Firestore, Live Broadcaster Spectating, Studio Camera Controls, and Real-Time Race Simulation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

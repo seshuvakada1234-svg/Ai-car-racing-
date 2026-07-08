@@ -1,0 +1,372 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User account information, matching permission roles, display names and metadata.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Unique identifier of the user (Firebase Auth UID)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the user."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Email address of the user."
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "URL to the user profile photo/avatar."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["user", "broadcaster", "admin"],
+          "description": "Permission tier role of the user, derived from their verified email."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp indicating when the profile doc was registered."
+        }
+      },
+      "required": ["uid", "name", "email", "photoURL", "role"]
+    },
+    "Leaderboard": {
+      "title": "Leaderboard Score Record",
+      "description": "A single race complete scorecard entry for top speeds.",
+      "type": "object",
+      "properties": {
+        "playerName": {
+          "type": "string",
+          "description": "Name of the player completing the race."
+        },
+        "selectedCar": {
+          "type": "string",
+          "description": "Identifier key of the high-performance car used."
+        },
+        "topSpeed": {
+          "type": "integer",
+          "description": "Calculated top speed (in km/h) recorded during the race."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of score submission."
+        }
+      },
+      "required": ["playerName", "selectedCar", "topSpeed", "createdAt"]
+    },
+    "Map": {
+      "title": "Track Map",
+      "description": "Configuration metadata for a racing track circuit.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique slug identifying the racing track geometry map."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the racing circuit track."
+        },
+        "difficulty": {
+          "type": "string",
+          "enum": ["easy", "medium", "hard"],
+          "description": "General AI difficult parameter of the map."
+        },
+        "laps": {
+          "type": "integer",
+          "description": "Number of lap loops required to finish the race."
+        },
+        "description": {
+          "type": "string",
+          "description": "Short summary detailing track surface and visual setting."
+        }
+      },
+      "required": ["id", "name", "difficulty", "laps"]
+    },
+    "Car": {
+      "title": "Racer Car",
+      "description": "Properties and attributes of high-performance vehicles selectable in-game.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Model key slug of the vehicle."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the sports vehicle model."
+        },
+        "topSpeed": {
+          "type": "integer",
+          "description": "Maximum top speed index of the car."
+        },
+        "acceleration": {
+          "type": "string",
+          "description": "Visual indicator of 0-100 speed velocity acceleration time."
+        },
+        "handling": {
+          "type": "integer",
+          "description": "General friction static handling steering coefficient."
+        },
+        "desc": {
+          "type": "string",
+          "description": "Short vehicle specification details."
+        },
+        "colorPreset": {
+          "type": "string",
+          "description": "Default hex color indicator for the car chassis."
+        },
+        "class": {
+          "type": "string",
+          "description": "The category tier rating, e.g. S-CLASS, A-CLASS."
+        }
+      },
+      "required": ["id", "name", "topSpeed", "acceleration", "handling", "class"]
+    },
+    "Room": {
+      "title": "Matchmaking Room",
+      "description": "Staging room for coordinating peer synchronization in multiplayer racing grids.",
+      "type": "object",
+      "properties": {
+        "roomCode": {
+          "type": "string",
+          "description": "Unique six length uppercase alphabetic code identifier."
+        },
+        "code": {
+          "type": "string",
+          "description": "Room alphabetic code alias."
+        },
+        "hostId": {
+          "type": "string",
+          "description": "The unique creator user ID host."
+        },
+        "map": {
+          "type": "string",
+          "description": "Track ID selected for the multiplayer match."
+        },
+        "difficulty": {
+          "type": "string",
+          "enum": ["easy", "medium", "hard"],
+          "description": "Match artificial intelligence diff level."
+        },
+        "laps": {
+          "type": "integer",
+          "description": "Target lap count loops."
+        },
+        "weather": {
+          "type": "string",
+          "description": "Interactive ambient weather choice representation."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["waiting", "countdown", "racing", "finished"],
+          "description": "Phase state indicating match progression staging."
+        },
+        "countdown": {
+          "type": "integer",
+          "description": "Second counter remaining before triggering countdown sequence."
+        },
+        "maxPlayers": {
+          "type": "integer",
+          "description": "Max player cap size inside lobby."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp of the staging lobby."
+        }
+      },
+      "required": ["roomCode", "hostId", "map", "difficulty", "laps", "weather", "status", "countdown", "maxPlayers"]
+    },
+    "RoomPlayer": {
+      "title": "Multiplayer Room Player",
+      "description": "A single player enrolled in a matchmaking room.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth User ID of the player."
+        },
+        "playerName": {
+          "type": "string",
+          "description": "Nickname of the player."
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Avatar image URL of the player."
+        },
+        "joinedAt": {
+          "type": "integer",
+          "description": "Epoch millisecond timestamp of joining the room."
+        },
+        "ready": {
+          "type": "boolean",
+          "description": "Whether the player is ready to race."
+        }
+      },
+      "required": ["uid", "playerName", "joinedAt", "ready"]
+    },
+    "Live": {
+      "title": "Live Broadcast Staging",
+      "description": "The active live streaming race metadata mapping currently active race room code for automatic spectator and racer synchronization.",
+      "type": "object",
+      "properties": {
+        "roomCode": {
+          "type": "string",
+          "description": "The 6-digit active matchmaker staging room code."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of broadcast updates."
+        }
+      },
+      "required": ["roomCode"]
+    },
+    "ActivityLog": {
+      "title": "Admin Activity Log",
+      "description": "Logs of actions performed by administrators and broadcasters.",
+      "type": "object",
+      "properties": {
+        "actionType": {
+          "type": "string",
+          "description": "The description or category of the action."
+        },
+        "details": {
+          "type": "string",
+          "description": "Detailed log message."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the logged action."
+        }
+      },
+      "required": ["actionType", "details", "timestamp"]
+    },
+    "BroadcastFeed": {
+      "title": "Live Broadcast Feed",
+      "description": "A live streaming broadcast feed managed by a broadcaster.",
+      "type": "object",
+      "properties": {
+        "broadcasterName": {
+          "type": "string",
+          "description": "Name of the broadcaster operating the feed."
+        },
+        "roomCode": {
+          "type": "string",
+          "description": "The active room code being broadcasted."
+        },
+        "map": {
+          "type": "string",
+          "description": "The map circuit name."
+        },
+        "status": {
+          "type": "string",
+          "description": "Current status of the stream."
+        }
+      },
+      "required": ["broadcasterName", "roomCode"]
+    },
+    "SystemSettings": {
+      "title": "System Settings",
+      "description": "Global settings and matchmaking variables.",
+      "type": "object",
+      "properties": {
+        "countdownSeconds": {
+          "type": "integer"
+        },
+        "maxPlayers": {
+          "type": "integer"
+        },
+        "botCount": {
+          "type": "integer"
+        },
+        "botDifficulty": {
+          "type": "string"
+        },
+        "notificationsEnabled": {
+          "type": "boolean"
+        },
+        "maintenanceMode": {
+          "type": "boolean"
+        },
+        "adminEmail": {
+          "type": "string"
+        }
+      },
+      "required": ["countdownSeconds", "maxPlayers"]
+    },
+    "Invitation": {
+      "title": "User Invitation",
+      "description": "Pre-allocated role assignments for pending user registrations.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "assignedRole": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["email", "assignedRole"]
+    }
+  },
+  "firestore": {
+    "/live/{docId}": {
+      "schema": "Live",
+      "description": "Collection tracking active public broadcaster live streams."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Profiles collection mapping users or invited roles by verified emails."
+    },
+    "/leaderboards/{docId}": {
+      "schema": "Leaderboard",
+      "description": "Leaderboard records collection documenting player score records."
+    },
+    "/maps/{mapId}": {
+      "schema": "Map",
+      "description": "Seeded collection containing race track geography meta-parameters."
+    },
+    "/cars/{carId}": {
+      "schema": "Car",
+      "description": "Performance attributes definitions repository for selectable cars."
+    },
+    "/rooms/{roomId}": {
+      "schema": "Room",
+      "description": "Staging server configurations synchronized for real-time multiplayer lobbies."
+    },
+    "/rooms/{roomId}/players/{uid}": {
+      "schema": "RoomPlayer",
+      "description": "Subcollection of players joined to concrete match staging room."
+    },
+    "/activity/{docId}": {
+      "schema": "ActivityLog",
+      "description": "Collection logging all system administrative and configuration logs."
+    },
+    "/broadcasts/{feedId}": {
+      "schema": "BroadcastFeed",
+      "description": "Collection of active video spectator broadcast transmissions."
+    },
+    "/settings/{docId}": {
+      "schema": "SystemSettings",
+      "description": "Collection containing the global system configurations document."
+    },
+    "/invitations/{docId}": {
+      "schema": "Invitation",
+      "description": "Collection of pre-allocated role invitations for new registers."
+    }
+  }
+}
