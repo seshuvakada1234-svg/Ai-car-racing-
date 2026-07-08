@@ -1,10 +1,11 @@
+
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { auth, db, googleProvider } from "../lib/firebase";
-import { signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, User } from "firebase/auth";
+import { signInWithPopup, signOut, onAuthStateChanged, User } from "firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { handleFirestoreError, OperationType } from "../lib/firestoreError";
 
-export type UserRole = "admin" | "broadcaster" | "user";
+export type UserRole = "admin" | "broadcaster" | "user" | "BROADCAST_ADMIN" | "STREAM_CLIENT" | "PLAYER";
 
 export interface UserProfile {
   uid: string;
@@ -23,7 +24,6 @@ interface AuthContextType {
   profile: UserProfile | null;
   loading: boolean;
   loginWithGoogle: () => Promise<void>;
-  loginAsGuest: (email?: string) => Promise<void>;
   logout: () => Promise<void>;
   setProfileField: (field: keyof UserProfile, value: any) => Promise<void>;
 }
@@ -37,34 +37,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Determine role based on email as requested
   const getRoleFromEmail = (email: string | null): UserRole => {
-    if (!email) return "user";
+    if (!email) return "PLAYER";
     const emailLower = email.toLowerCase().trim();
-    if (
-      emailLower === "seshuvakada1234@gmail.com" ||
-      emailLower === "resumepro.ads@gmail.com"
-    ) {
+    if (emailLower === "seshuvakada1234@gmail.com" || emailLower === "resumepro.ads@gmail.com") {
       return "admin";
-    } else if (
-      emailLower === "seshuvakada522@gmail.com" ||
-      emailLower === "seshuvakada5@gmail.com"
-    ) {
-      return "broadcaster";
+    } else if (emailLower === "seshuvakada522@gmail.com") {
+      return "BROADCAST_ADMIN";
+    } else if (emailLower === "seshuvakada5@gmail.com") {
+      return "STREAM_CLIENT";
     }
-    return "user";
+    return "PLAYER";
   };
 
   useEffect(() => {
-    // Handle redirect sign-in result on mount to complete the Google OAuth flow
-    getRedirectResult(auth)
-      .then((result) => {
-        if (result?.user) {
-          console.log("Successfully resolved Google redirect sign-in for:", result.user.email);
-        }
-      })
-      .catch((error) => {
-        console.error("Error resolving Google redirect sign-in:", error);
-      });
-
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       try {
         if (firebaseUser) {
@@ -73,74 +58,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Determine correct role based on the email
           const currentRole = getRoleFromEmail(firebaseUser.email);
           const userDocRef = doc(db, "users", firebaseUser.uid);
-          
+          const docSnap = await getDoc(userDocRef);
+
           let finalProfile: UserProfile;
 
-          try {
-            const docSnap = await getDoc(userDocRef);
-
-            if (docSnap.exists()) {
-              const data = docSnap.data();
-              // If the role isn't matched up (e.g. email role changed or was created differently),
-              // update it to match the strict email assignment logic
-              if (data.role !== currentRole) {
-                const updatedData = {
-                  ...data,
-                  role: currentRole,
-                  name: data.name || firebaseUser.displayName || "Racer",
-                  photoURL: data.photoURL || firebaseUser.photoURL || "",
-                };
-                try {
-                  await setDoc(userDocRef, updatedData, { merge: true });
-                } catch (writeError) {
-                  console.warn("Failed to update user profile in Firestore (falling back to memory):", writeError);
-                }
-                finalProfile = {
-                  uid: firebaseUser.uid,
-                  name: updatedData.name,
-                  email: firebaseUser.email || "",
-                  photoURL: updatedData.photoURL,
-                  role: currentRole,
-                  createdAt: data.createdAt,
-                };
-              } else {
-                finalProfile = {
-                  uid: firebaseUser.uid,
-                  name: data.name || firebaseUser.displayName || "Racer",
-                  email: firebaseUser.email || "",
-                  photoURL: data.photoURL || firebaseUser.photoURL || "",
-                  role: data.role as UserRole,
-                  createdAt: data.createdAt,
-                };
-              }
-            } else {
-              // Document does not exist, create it inside Firestore
-              const initialProfile = {
-                uid: firebaseUser.uid,
-                name: firebaseUser.displayName || "Racer",
-                email: firebaseUser.email || "",
-                photoURL: firebaseUser.photoURL || "",
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            // If the role isn't matched up (e.g. email role changed or was created differently),
+            // update it to match the strict email assignment logic
+            if (data.role !== currentRole) {
+              const updatedData = {
+                ...data,
                 role: currentRole,
-                createdAt: serverTimestamp(),
+                name: data.name || firebaseUser.displayName || "Racer",
+                photoURL: data.photoURL || firebaseUser.photoURL || "",
               };
-              try {
-                await setDoc(userDocRef, initialProfile);
-              } catch (writeError) {
-                console.warn("Failed to create user profile in Firestore (falling back to memory):", writeError);
-              }
+              await setDoc(userDocRef, updatedData, { merge: true });
               finalProfile = {
-                ...initialProfile,
-                createdAt: new Date(),
+                uid: firebaseUser.uid,
+                name: updatedData.name,
+                email: firebaseUser.email || "",
+                photoURL: updatedData.photoURL,
+                role: currentRole,
+                createdAt: data.createdAt,
+              };
+            } else {
+              finalProfile = {
+                uid: firebaseUser.uid,
+                name: data.name || firebaseUser.displayName || "Racer",
+                email: firebaseUser.email || "",
+                photoURL: data.photoURL || firebaseUser.photoURL || "",
+                role: data.role as UserRole,
+                createdAt: data.createdAt,
               };
             }
-          } catch (dbError) {
-            console.warn("Error reading/writing to Firestore users collection, using fallback local profile:", dbError);
-            finalProfile = {
+          } else {
+            // Document does not exist, create it inside Firestore
+            const initialProfile = {
               uid: firebaseUser.uid,
               name: firebaseUser.displayName || "Racer",
               email: firebaseUser.email || "",
               photoURL: firebaseUser.photoURL || "",
               role: currentRole,
+              createdAt: serverTimestamp(),
+            };
+            await setDoc(userDocRef, initialProfile);
+            finalProfile = {
+              ...initialProfile,
               createdAt: new Date(),
             };
           }
@@ -151,7 +115,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setProfile(null);
         }
       } catch (error) {
-        console.error("Error in onAuthStateChanged wrapper:", error);
+        console.error("Error synchronizing auth user profile:", error);
+        if (firebaseUser) {
+          handleFirestoreError(error, OperationType.GET, "users/" + firebaseUser.uid);
+        } else {
+          handleFirestoreError(error, OperationType.GET, "users");
+        }
       } finally {
         setLoading(false);
       }
@@ -163,49 +132,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithGoogle = async () => {
     setLoading(true);
     try {
-      // Dynamic detection of mobile devices to maximize user success.
-      // - Mobile browsers: redirect flows are safer/more reliable as popups are often blocked.
-      // - Desktop browsers: popup flows are better since they don't unload state.
-      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      
-      if (isMobile) {
-        console.log("Mobile device detected. Initiating Google Sign-In with Redirect...");
-        await signInWithRedirect(auth, googleProvider);
-      } else {
-        console.log("Desktop device detected. Initiating Google Sign-In with Popup...");
-        await signInWithPopup(auth, googleProvider);
-      }
+      await signInWithPopup(auth, googleProvider);
     } catch (e) {
       console.error("Failed to log in with Google:", e);
       setLoading(false);
       throw e;
-    }
-  };
-
-  const loginAsGuest = async (email: string = "seshuvakada1234@gmail.com") => {
-    setLoading(true);
-    try {
-      const mockUid = "guest-uid-" + Math.floor(Math.random() * 1000000);
-      const mockUser = {
-        uid: mockUid,
-        email: email,
-        displayName: "Guest Racer",
-        photoURL: "",
-      } as any;
-      
-      setUser(mockUser);
-      setProfile({
-        uid: mockUid,
-        name: "Guest Racer",
-        email: email,
-        photoURL: "",
-        role: getRoleFromEmail(email),
-        createdAt: new Date(),
-      });
-    } catch (e) {
-      console.error("Failed to log in as guest:", e);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -235,7 +166,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, loginWithGoogle, loginAsGuest, logout, setProfileField }}>
+    <AuthContext.Provider value={{ user, profile, loading, loginWithGoogle, logout, setProfileField }}>
       {children}
     </AuthContext.Provider>
   );
