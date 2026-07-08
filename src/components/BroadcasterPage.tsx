@@ -44,6 +44,7 @@ import {
   Gauge,
   Copy,
   ExternalLink,
+  Gamepad2,
   ShieldAlert,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -106,6 +107,7 @@ export const BroadcasterCockpitLayout: React.FC<BroadcasterLayoutProps> = ({
 
   const navItems = [
     { id: "dashboard", label: "Console Desk", icon: Layout },
+    { id: "my-game", label: "My Game", icon: Gamepad2 },
     { id: "live-game", label: "Live Arena Feed", icon: Monitor },
     { id: "camera", label: "AI Camera Director", icon: Camera },
     { id: "analytics", label: "Esports Analytics", icon: BarChart2 },
@@ -745,6 +747,78 @@ export const BroadcasterDashboard: React.FC = () => {
                 src="/"
                 className="w-full flex-1 border-none bg-[#05070B]"
                 title="Arena Live Home Feed"
+                allow="camera; microphone; geolocation"
+              />
+            </div>
+          </motion.div>
+        )}
+
+        {/* VIEW 7: MY PLAYABLE GAME INTERACTIVE TERMINAL */}
+        {activeTab === "my-game" && (
+          <motion.div
+            key="my-game"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="space-y-6 flex flex-col h-[calc(100vh-140px)]"
+          >
+            {/* Header info */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-gradient-to-r from-[#070B14] via-[#0E1624] to-[#070B14] border border-[#1E293B] p-5 rounded-2xl shadow-xl">
+              <div className="space-y-1.5">
+                <h3 className="text-sm font-black uppercase tracking-wider text-white flex items-center space-x-2.5">
+                  <Gamepad2 className="w-5 h-5 text-[#00E5FF] animate-pulse" />
+                  <span>My Active Race Arena Game</span>
+                </h3>
+                <p className="text-[10px] text-slate-400 font-medium font-mono leading-relaxed max-w-2xl">
+                  Connect controllers, set visual configurations, or play the race directly in the interactive screen below. 
+                  Use <span className="text-[#00E5FF] font-bold">W, A, S, D</span> or <span className="text-[#00E5FF] font-bold">Arrow Keys</span> to steer, and <span className="text-amber-400 font-bold">Spacebar</span> for high-speed braking.
+                </p>
+              </div>
+              <div className="flex items-center space-x-2 shrink-0">
+                <button
+                  onClick={() => {
+                    const iframe = document.getElementById("active-playable-game") as HTMLIFrameElement;
+                    if (iframe) iframe.src = "/";
+                  }}
+                  className="flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 text-white font-bold uppercase text-[9px] tracking-wider px-3.5 py-2.5 rounded-xl border border-slate-700 transition cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin-slow" />
+                  <span>Reset Session</span>
+                </button>
+                <a
+                  href="/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center space-x-2 bg-gradient-to-r from-[#00E5FF] to-[#7C4DFF] text-white font-black uppercase text-[9px] tracking-widest px-4 py-2.5 rounded-xl shadow-[0_0_15px_rgba(0,229,255,0.25)] hover:shadow-[0_0_20px_rgba(0,229,255,0.4)] transition"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>PLAY FULLSCREEN</span>
+                </a>
+              </div>
+            </div>
+
+            {/* Embedded Live Iframe with futuristic frame styling */}
+            <div className="flex-1 min-h-[500px] border border-[#2A364F] rounded-3xl overflow-hidden bg-[#020408] relative flex flex-col shadow-2xl">
+              <div className="bg-[#0B1220] px-5 py-3 border-b border-[#1E293B] flex items-center justify-between text-[10px] font-mono font-bold text-slate-400">
+                <div className="flex items-center space-x-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping"></span>
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 absolute"></span>
+                  <span className="ml-3.5 text-[10px] text-[#00E5FF] uppercase font-black tracking-widest">CONSOLE // ACTIVE_GAMEPLAY_FEED</span>
+                </div>
+                <div className="flex items-center space-x-4">
+                  <div className="hidden sm:flex items-center space-x-1 text-[9px] text-slate-500">
+                    <span>STEERING:</span>
+                    <span className="text-[#00E5FF] font-black">WSAD / ARROWS</span>
+                  </div>
+                  <div className="h-3 w-[1px] bg-slate-800 hidden sm:block"></div>
+                  <span className="text-[9px] uppercase tracking-wider text-slate-500">UPLINK STATE: SYNCED</span>
+                </div>
+              </div>
+              <iframe
+                id="active-playable-game"
+                src="/"
+                className="w-full flex-1 border-none bg-[#020408]"
+                title="My Race Arena Gameplay"
                 allow="camera; microphone; geolocation"
               />
             </div>

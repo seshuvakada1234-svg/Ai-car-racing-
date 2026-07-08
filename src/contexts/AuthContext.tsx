@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { auth, db, googleProvider } from "../lib/firebase";
-import { signInWithPopup, signOut, onAuthStateChanged, User } from "firebase/auth";
+import { signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, User } from "firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { handleFirestoreError, OperationType } from "../lib/firestoreError";
 
@@ -54,6 +54,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
+    // Handle redirect sign-in result on mount to complete the Google OAuth flow
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          console.log("Successfully resolved Google redirect sign-in for:", result.user.email);
+        }
+      })
+      .catch((error) => {
+        console.error("Error resolving Google redirect sign-in:", error);
+      });
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       try {
         if (firebaseUser) {
@@ -152,7 +163,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithGoogle = async () => {
     setLoading(true);
     try {
-      await signInWithPopup(auth, googleProvider);
+      // Dynamic detection of mobile devices to maximize user success.
+      // - Mobile browsers: redirect flows are safer/more reliable as popups are often blocked.
+      // - Desktop browsers: popup flows are better since they don't unload state.
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      
+      if (isMobile) {
+        console.log("Mobile device detected. Initiating Google Sign-In with Redirect...");
+        await signInWithRedirect(auth, googleProvider);
+      } else {
+        console.log("Desktop device detected. Initiating Google Sign-In with Popup...");
+        await signInWithPopup(auth, googleProvider);
+      }
     } catch (e) {
       console.error("Failed to log in with Google:", e);
       setLoading(false);
