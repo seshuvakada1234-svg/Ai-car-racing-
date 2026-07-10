@@ -1,6 +1,14 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+// AuthContext.tsx
+import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { auth, db, googleProvider } from "../lib/firebase";
-import { signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, User } from "firebase/auth";
+import {
+  signInWithPopup,
+  signInAnonymously,
+  signOut,
+  onAuthStateChanged,
+  updateProfile,
+  User,
+} from "firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { handleFirestoreError, OperationType } from "../lib/firestoreError";
 
@@ -13,6 +21,7 @@ export interface UserProfile {
   photoURL: string;
   role: UserRole;
   createdAt: any;
+  isGuest?: boolean;
   trophies?: number;
   keys?: number;
   coins?: number;
@@ -22,136 +31,133 @@ interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
+  loginError: string | null;
+  clearLoginError: () => void;
   loginWithGoogle: () => Promise<void>;
-  loginAsGuest: (email?: string) => Promise<void>;
+  loginAsGuest: (displayName?: string) => Promise<void>;
   logout: () => Promise<void>;
   setProfileField: (field: keyof UserProfile, value: any) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const getRoleFromEmail = (email: string | null): UserRole => {
+  if (!email) return "user";
+  const emailLower = email.toLowerCase().trim();
+  if (
+    emailLower === "seshuvakada1234@gmail.com" ||
+    emailLower === "resumepro.ads@gmail.com"
+  ) {
+    return "admin";
+  } else if (
+    emailLower === "seshuvakada522@gmail.com" ||
+    emailLower === "seshuvakada5@gmail.com"
+  ) {
+    return "broadcaster";
+  }
+  return "user";
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
-  // Determine role based on email as requested
-  const getRoleFromEmail = (email: string | null): UserRole => {
-    if (!email) return "user";
-    const emailLower = email.toLowerCase().trim();
-    if (
-      emailLower === "seshuvakada1234@gmail.com" ||
-      emailLower === "resumepro.ads@gmail.com"
-    ) {
-      return "admin";
-    } else if (
-      emailLower === "seshuvakada522@gmail.com" ||
-      emailLower === "seshuvakada5@gmail.com"
-    ) {
-      return "broadcaster";
+  const clearLoginError = useCallback(() => setLoginError(null), []);
+
+  // Shared logic: given a Firebase Auth user, ensure a matching Firestore profile
+  // exists and return the resolved local profile. This is the single source of
+  // truth used by both Google sign-in and guest (anonymous) sign-in, so neither
+  // path can silently diverge or fail differently.
+  const ensureUserProfile = async (firebaseUser: User): Promise<UserProfile> => {
+    const isGuest = firebaseUser.isAnonymous;
+    const currentRole = getRoleFromEmail(firebaseUser.email);
+    const userDocRef = doc(db, "users", firebaseUser.uid);
+
+    const docSnap = await getDoc(userDocRef);
+
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      if (data.role !== currentRole && !isGuest) {
+        const updatedData = {
+          ...data,
+          role: currentRole,
+          name: data.name || firebaseUser.displayName || "Racer",
+          photoURL: data.photoURL || firebaseUser.photoURL || "",
+        };
+        await setDoc(userDocRef, updatedData, { merge: true });
+        return {
+          uid: firebaseUser.uid,
+          name: updatedData.name,
+          email: firebaseUser.email || "",
+          photoURL: updatedData.photoURL,
+          role: currentRole,
+          createdAt: data.createdAt,
+          isGuest,
+        };
+      }
+      return {
+        uid: firebaseUser.uid,
+        name: data.name || firebaseUser.displayName || "Racer",
+        email: firebaseUser.email || "",
+        photoURL: data.photoURL || firebaseUser.photoURL || "",
+        role: data.role as UserRole,
+        createdAt: data.createdAt,
+        isGuest,
+      };
     }
-    return "user";
+
+    // Brand-new user/guest: create the Firestore doc. This is the write that
+    // was previously failing silently for new players — now it's awaited and
+    // any failure propagates up instead of being swallowed.
+    const initialProfile = {
+      uid: firebaseUser.uid,
+      name: firebaseUser.displayName || (isGuest ? "Guest Racer" : "Racer"),
+      email: firebaseUser.email || "",
+      photoURL: firebaseUser.photoURL || "",
+      role: currentRole,
+      isGuest,
+      createdAt: serverTimestamp(),
+    };
+    await setDoc(userDocRef, initialProfile);
+    return { ...initialProfile, createdAt: new Date() };
   };
 
   useEffect(() => {
-    // Handle redirect sign-in result on mount to complete the Google OAuth flow
-    getRedirectResult(auth)
-      .then((result) => {
-        if (result?.user) {
-          console.log("Successfully resolved Google redirect sign-in for:", result.user.email);
-        }
-      })
-      .catch((error) => {
-        console.error("Error resolving Google redirect sign-in:", error);
-      });
-
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (!firebaseUser) {
+        setUser(null);
+        setProfile(null);
+        setLoading(false);
+        return;
+      }
+
+      setUser(firebaseUser);
       try {
-        if (firebaseUser) {
-          setUser(firebaseUser);
-
-          // Determine correct role based on the email
-          const currentRole = getRoleFromEmail(firebaseUser.email);
-          const userDocRef = doc(db, "users", firebaseUser.uid);
-          
-          let finalProfile: UserProfile;
-
-          try {
-            const docSnap = await getDoc(userDocRef);
-
-            if (docSnap.exists()) {
-              const data = docSnap.data();
-              // If the role isn't matched up (e.g. email role changed or was created differently),
-              // update it to match the strict email assignment logic
-              if (data.role !== currentRole) {
-                const updatedData = {
-                  ...data,
-                  role: currentRole,
-                  name: data.name || firebaseUser.displayName || "Racer",
-                  photoURL: data.photoURL || firebaseUser.photoURL || "",
-                };
-                try {
-                  await setDoc(userDocRef, updatedData, { merge: true });
-                } catch (writeError) {
-                  console.warn("Failed to update user profile in Firestore (falling back to memory):", writeError);
-                }
-                finalProfile = {
-                  uid: firebaseUser.uid,
-                  name: updatedData.name,
-                  email: firebaseUser.email || "",
-                  photoURL: updatedData.photoURL,
-                  role: currentRole,
-                  createdAt: data.createdAt,
-                };
-              } else {
-                finalProfile = {
-                  uid: firebaseUser.uid,
-                  name: data.name || firebaseUser.displayName || "Racer",
-                  email: firebaseUser.email || "",
-                  photoURL: data.photoURL || firebaseUser.photoURL || "",
-                  role: data.role as UserRole,
-                  createdAt: data.createdAt,
-                };
-              }
-            } else {
-              // Document does not exist, create it inside Firestore
-              const initialProfile = {
-                uid: firebaseUser.uid,
-                name: firebaseUser.displayName || "Racer",
-                email: firebaseUser.email || "",
-                photoURL: firebaseUser.photoURL || "",
-                role: currentRole,
-                createdAt: serverTimestamp(),
-              };
-              try {
-                await setDoc(userDocRef, initialProfile);
-              } catch (writeError) {
-                console.warn("Failed to create user profile in Firestore (falling back to memory):", writeError);
-              }
-              finalProfile = {
-                ...initialProfile,
-                createdAt: new Date(),
-              };
-            }
-          } catch (dbError) {
-            console.warn("Error reading/writing to Firestore users collection, using fallback local profile:", dbError);
-            finalProfile = {
-              uid: firebaseUser.uid,
-              name: firebaseUser.displayName || "Racer",
-              email: firebaseUser.email || "",
-              photoURL: firebaseUser.photoURL || "",
-              role: currentRole,
-              createdAt: new Date(),
-            };
-          }
-
-          setProfile(finalProfile);
-        } else {
-          setUser(null);
-          setProfile(null);
-        }
-      } catch (error) {
-        console.error("Error in onAuthStateChanged wrapper:", error);
+        const finalProfile = await ensureUserProfile(firebaseUser);
+        setProfile(finalProfile);
+        setLoginError(null);
+      } catch (dbError: any) {
+        // Surface the real reason instead of hiding it. Most commonly this is
+        // a Firestore security-rules rejection on create/read for the new user.
+        console.error("Failed to load/create user profile:", dbError);
+        handleFirestoreError(dbError, OperationType.GET, `users/${firebaseUser.uid}`);
+        setLoginError(
+          dbError?.code === "permission-denied"
+            ? "Your account signed in, but we couldn't create your player profile (permission denied). Check Firestore rules."
+            : "Signed in, but couldn't load your player profile. Please try again."
+        );
+        // Fall back to a local-only profile so the app isn't fully blocked.
+        setProfile({
+          uid: firebaseUser.uid,
+          name: firebaseUser.displayName || "Racer",
+          email: firebaseUser.email || "",
+          photoURL: firebaseUser.photoURL || "",
+          role: getRoleFromEmail(firebaseUser.email),
+          isGuest: firebaseUser.isAnonymous,
+          createdAt: new Date(),
+        });
       } finally {
         setLoading(false);
       }
@@ -162,44 +168,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loginWithGoogle = async () => {
     setLoading(true);
+    setLoginError(null);
     try {
-      // In an iframe-based development preview environment (like AI Studio), 
-      // signInWithRedirect will fail or display a 403 because Google's Accounts page
-      // blocks rendering inside iframes. signInWithPopup opens a separate tab,
-      // avoiding iframe blockades completely on both mobile and desktop.
-      console.log("Initiating Google Sign-In with Popup for iframe compatibility...");
       await signInWithPopup(auth, googleProvider);
     } catch (e: any) {
       console.error("Failed to log in with Google:", e);
+      setLoginError(mapAuthError(e));
       setLoading(false);
       throw e;
     }
   };
 
-  const loginAsGuest = async (email: string = "seshuvakada1234@gmail.com") => {
+  // Real Firebase Anonymous Auth — this is what makes guest play actually
+  // work with Firestore security rules, since request.auth.uid is now a real,
+  // server-verified value instead of a client-side mock.
+  const loginAsGuest = async (displayName: string = "Guest Racer") => {
     setLoading(true);
+    setLoginError(null);
     try {
-      const mockUid = "guest-uid-" + Math.floor(Math.random() * 1000000);
-      const mockUser = {
-        uid: mockUid,
-        email: email,
-        displayName: "Guest Racer",
-        photoURL: "",
-      } as any;
-      
-      setUser(mockUser);
-      setProfile({
-        uid: mockUid,
-        name: "Guest Racer",
-        email: email,
-        photoURL: "",
-        role: getRoleFromEmail(email),
-        createdAt: new Date(),
-      });
-    } catch (e) {
+      const cred = await signInAnonymously(auth);
+      if (displayName) {
+        await updateProfile(cred.user, { displayName });
+      }
+      // onAuthStateChanged will fire and handle profile creation.
+    } catch (e: any) {
       console.error("Failed to log in as guest:", e);
-    } finally {
+      setLoginError(mapAuthError(e));
       setLoading(false);
+      throw e;
     }
   };
 
@@ -229,11 +225,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, loginWithGoogle, loginAsGuest, logout, setProfileField }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        profile,
+        loading,
+        loginError,
+        clearLoginError,
+        loginWithGoogle,
+        loginAsGuest,
+        logout,
+        setProfileField,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
 };
+
+function mapAuthError(e: any): string {
+  const code = e?.code || "";
+  if (code === "auth/unauthorized-domain") {
+    return "This domain isn't authorized in Firebase Auth settings. Add it under Authentication → Settings → Authorized domains.";
+  }
+  if (code === "auth/popup-blocked" || code === "auth/popup-closed-by-user") {
+    return "Sign-in popup was blocked or closed. Please allow popups and try again.";
+  }
+  if (code === "auth/admin-restricted-operation") {
+    return "Anonymous sign-in is disabled for this project. Enable it in Firebase Console → Authentication → Sign-in method.";
+  }
+  return e?.message || "Login failed. Please try again.";
+}
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
