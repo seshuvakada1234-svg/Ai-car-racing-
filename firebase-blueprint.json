@@ -27,6 +27,10 @@
           "enum": ["user", "broadcaster", "admin"],
           "description": "Permission tier role of the user, derived from their verified email."
         },
+        "isGuest": {
+          "type": "boolean",
+          "description": "Flag indicating if the player is registered as an anonymous guest."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",

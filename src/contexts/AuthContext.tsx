@@ -79,10 +79,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (docSnap.exists()) {
       const data = docSnap.data();
-      if (data.role !== currentRole && !isGuest) {
+      if ((data.role !== currentRole && !isGuest) || (data.isGuest === undefined && isGuest !== undefined)) {
         const updatedData = {
           ...data,
-          role: currentRole,
+          role: isGuest ? "user" : currentRole,
+          email: firebaseUser.email || data.email || "",
+          isGuest,
           name: data.name || firebaseUser.displayName || "Racer",
           photoURL: data.photoURL || firebaseUser.photoURL || "",
         };
@@ -90,9 +92,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return {
           uid: firebaseUser.uid,
           name: updatedData.name,
-          email: firebaseUser.email || "",
+          email: updatedData.email,
           photoURL: updatedData.photoURL,
-          role: currentRole,
+          role: isGuest ? "user" : currentRole,
           createdAt: data.createdAt,
           isGuest,
         };
@@ -100,11 +102,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return {
         uid: firebaseUser.uid,
         name: data.name || firebaseUser.displayName || "Racer",
-        email: firebaseUser.email || "",
+        email: data.email || firebaseUser.email || "",
         photoURL: data.photoURL || firebaseUser.photoURL || "",
-        role: data.role as UserRole,
+        role: (data.role || (isGuest ? "user" : currentRole)) as UserRole,
         createdAt: data.createdAt,
-        isGuest,
+        isGuest: data.isGuest !== undefined ? data.isGuest : isGuest,
       };
     }
 
