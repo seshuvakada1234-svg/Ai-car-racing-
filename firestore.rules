@@ -24,14 +24,14 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && (
-        (isEmailVerified() && request.auth.token.get('email', '') in ['seshuvakada1234@gmail.com', 'resumepro.ads@gmail.com']) ||
+        (isEmailVerified() && request.auth.token.get('email', '').lower() in ['seshuvakada1234@gmail.com', 'resumepro.ads@gmail.com']) ||
         isUserRole('admin')
       );
     }
 
     function isBroadcaster() {
       return isSignedIn() && (
-        (isEmailVerified() && request.auth.token.get('email', '') in ['seshuvakada522@gmail.com', 'seshuvakada5@gmail.com']) ||
+        (isEmailVerified() && request.auth.token.get('email', '').lower() in ['seshuvakada522@gmail.com', 'seshuvakada5@gmail.com']) ||
         isAdmin() ||
         isUserRole('broadcaster')
       );
@@ -42,8 +42,8 @@ service cloud.firestore {
     }
 
     function getExpectedRole(email) {
-      return (email == 'seshuvakada1234@gmail.com' || email == 'resumepro.ads@gmail.com') ? 'admin' :
-             (email == 'seshuvakada522@gmail.com' || email == 'seshuvakada5@gmail.com') ? 'broadcaster' :
+      return (email.lower() == 'seshuvakada1234@gmail.com' || email.lower() == 'resumepro.ads@gmail.com') ? 'admin' :
+             (email.lower() == 'seshuvakada522@gmail.com' || email.lower() == 'seshuvakada5@gmail.com') ? 'broadcaster' :
              'user';
     }
 
@@ -62,13 +62,13 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.auth.uid == userId && 
                     'email' in request.auth.token &&
                     request.resource.data.role == getExpectedRole(request.auth.token.email) && 
-                    request.resource.data.email == request.auth.token.email;
+                    request.resource.data.email.lower() == request.auth.token.email.lower();
 
       // Allow users to update their own profiles (e.g. displayName/photo) but protect against unauthorized privilege escalations
       allow update: if isSignedIn() && request.auth.uid == userId && 
                     'email' in request.auth.token &&
                     (request.resource.data.role == resource.data.role || request.resource.data.role == getExpectedRole(request.auth.token.email)) && 
-                    request.resource.data.email == resource.data.email;
+                    request.resource.data.email.lower() == resource.data.email.lower();
 
       // Admins can perform structural updates on users
       allow update: if isAdmin();

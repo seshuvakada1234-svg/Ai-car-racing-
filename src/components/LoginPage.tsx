@@ -5,13 +5,41 @@
 
 import React, { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { Sparkles, AlertCircle, LogIn, Compass, Key } from "lucide-react";
+import { Sparkles, AlertCircle, LogIn, Compass, Key, User, Radio, Shield } from "lucide-react";
 import { motion } from "motion/react";
 
 export const LoginPage: React.FC = () => {
-  const { loginWithGoogle } = useAuth();
+  const { loginWithGoogle, loginAsGuest } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [selectedProfileIndex, setSelectedProfileIndex] = useState(0);
+
+  const guestProfiles = [
+    {
+      name: "Admin Developer",
+      email: "seshuvakada1234@gmail.com",
+      role: "admin",
+      desc: "Full database, maps & analytics console",
+      icon: Shield,
+      color: "text-red-400 border-red-500/20 bg-red-950/20 hover:bg-red-950/40"
+    },
+    {
+      name: "Live Broadcaster",
+      email: "seshuvakada522@gmail.com",
+      role: "broadcaster",
+      desc: "Staging dashboard & real-time cameras",
+      icon: Radio,
+      color: "text-purple-400 border-purple-500/20 bg-purple-950/20 hover:bg-purple-950/40"
+    },
+    {
+      name: "Guest Racer",
+      email: "racer.guest@asphalt.com",
+      role: "user",
+      desc: "Gameplay arena & local matchmaking rooms",
+      icon: User,
+      color: "text-cyan-400 border-cyan-500/20 bg-cyan-950/20 hover:bg-cyan-950/40"
+    }
+  ];
 
   const handleSignIn = async () => {
     setLoading(true);
@@ -19,7 +47,19 @@ export const LoginPage: React.FC = () => {
     try {
       await loginWithGoogle();
     } catch (e: any) {
-      setError(e.message || "Google Auth authentication failed. Please try again.");
+      setError(e.message || "Google Sign-In failed. Please try again or use Guest Access below.");
+      setLoading(false);
+    }
+  };
+
+  const handleGuestSignIn = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const selected = guestProfiles[selectedProfileIndex];
+      await loginAsGuest(selected.email);
+    } catch (e: any) {
+      setError(e.message || "Guest Sign-In failed. Please try again.");
       setLoading(false);
     }
   };
@@ -131,6 +171,62 @@ export const LoginPage: React.FC = () => {
                   <LogIn className="w-4.5 h-4.5 text-white stroke-[2.5px]" />
                   <span>SIGN IN WITH GOOGLE</span>
                 </>
+              )}
+            </button>
+
+            {/* Segmented Guest Section for Preview Bypass */}
+            <div className="relative flex items-center py-1">
+              <div className="flex-grow border-t border-white/10"></div>
+              <span className="flex-shrink mx-3 text-[9px] text-slate-500 font-mono tracking-widest uppercase">
+                OR GUEST BYPASS
+              </span>
+              <div className="flex-grow border-t border-white/10"></div>
+            </div>
+
+            <div className="space-y-2 text-left">
+              {guestProfiles.map((p, idx) => {
+                const IconComponent = p.icon;
+                const isSelected = selectedProfileIndex === idx;
+                return (
+                  <button
+                    key={p.role}
+                    onClick={() => setSelectedProfileIndex(idx)}
+                    className={`w-full flex items-start space-x-3 p-2.5 rounded-2xl border transition-all text-left cursor-pointer ${
+                      isSelected
+                        ? "border-[#00f2ff]/40 bg-[#00f2ff]/5"
+                        : "border-white/5 bg-white/[0.01] hover:bg-white/[0.03]"
+                    }`}
+                  >
+                    <div className={`p-1.5 rounded-xl bg-black/40 border border-white/10 ${isSelected ? "text-[#00f2ff]" : "text-slate-500"}`}>
+                      <IconComponent className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-black uppercase text-white tracking-tight">
+                          {p.name}
+                        </span>
+                        <span className="text-[8px] font-mono uppercase text-slate-500 tracking-wider">
+                          {p.role}
+                        </span>
+                      </div>
+                      <p className="text-[9px] text-slate-400 truncate mt-0.5 leading-none">
+                        {p.desc}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={handleGuestSignIn}
+              disabled={loading}
+              className="w-full flex items-center justify-center space-x-2 bg-slate-900 hover:bg-slate-800 active:scale-[98] text-white border border-slate-800 hover:border-slate-700 font-black uppercase text-[10px] tracking-wider py-3 px-6 rounded-2xl transition cursor-pointer"
+            >
+              {loading ? (
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <span>LAUNCH GUEST SESSION</span>
               )}
             </button>
 

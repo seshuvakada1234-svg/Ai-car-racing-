@@ -1,14 +1,29 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, User } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import firebaseConfig from "../../firebase-applet-config.json";
+
+const isClient = typeof window !== "undefined";
+const getAuthDomain = () => {
+  if (!isClient) return firebaseConfig.authDomain;
+  const hostname = window.location.hostname;
+  
+  // Use current hostname for custom domains (e.g., Vercel) to support same-origin redirects
+  if (
+    hostname &&
+    !hostname.includes("localhost") &&
+    !hostname.includes("127.0.0.1") &&
+    !hostname.includes("run.app") &&
+    !hostname.includes("aistudio")
+  ) {
+    return hostname;
+  }
+  return firebaseConfig.authDomain;
+};
 
 const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyAHuQWbA8Ws5YpYBhVsinH9vhCWo6pvejY",
-  authDomain: "gen-lang-client-0751322500.firebaseapp.com",
-  projectId: "gen-lang-client-0751322500",
-  storageBucket: "gen-lang-client-0751322500.firebasestorage.app",
-  messagingSenderId: "427595066203",
-  appId: "1:427595066203:web:aa7c6fb3503275e5fa887e",
+  ...firebaseConfig,
+  authDomain: getAuthDomain(),
 };
 
 const app = getApps().length ? getApp() : initializeApp(FIREBASE_CONFIG);
@@ -16,7 +31,7 @@ const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
 // Initialize Firestore with custom database ID from configuration
-const db = getFirestore(app, "ai-studio-6c7a2c4e-0ec1-4008-a8bc-0b3f9058dbdd");
+const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
 export { app, auth, googleProvider, db };
 export type { User };

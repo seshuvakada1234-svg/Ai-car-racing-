@@ -702,14 +702,14 @@ export const BroadcasterDashboard: React.FC = () => {
                   <span>Interactive Game Portal Feed</span>
                 </h3>
                 <p className="text-[10px] text-slate-400 font-medium font-mono">
-                  This panel embeds the live game home page inside the studio console, allowing real-time navigation and monitoring.
+                  This panel embeds the live game spectator view inside the studio console, allowing real-time navigation and monitoring.
                 </p>
               </div>
               <div className="flex items-center space-x-2">
                 <button
                   onClick={() => {
                     const iframe = document.getElementById("game-iframe") as HTMLIFrameElement;
-                    if (iframe) iframe.src = "/";
+                    if (iframe) iframe.src = "/spectator";
                   }}
                   className="flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 text-white font-bold uppercase text-[9px] tracking-wider px-3.5 py-2 rounded-lg border border-slate-700 transition cursor-pointer"
                 >
@@ -717,7 +717,7 @@ export const BroadcasterDashboard: React.FC = () => {
                   <span>Reload Portal</span>
                 </button>
                 <a
-                  href="/"
+                  href="/spectator"
                   target="_blank"
                   rel="noreferrer"
                   className="flex items-center space-x-2 bg-[#00E5FF]/20 hover:bg-[#00E5FF]/30 text-[#00E5FF] font-bold uppercase text-[9px] tracking-wider px-3.5 py-2 rounded-lg border border-[#00E5FF]/30 transition"
@@ -739,12 +739,12 @@ export const BroadcasterDashboard: React.FC = () => {
                 </div>
                 <div className="flex items-center space-x-4">
                   <span className="text-[9px] uppercase tracking-wider text-slate-500">STATUS: ACTIVE</span>
-                  <span className="text-[#00E5FF]">SRC: "/"</span>
+                  <span className="text-[#00E5FF]">SRC: "/spectator"</span>
                 </div>
               </div>
               <iframe
                 id="game-iframe"
-                src="/"
+                src="/spectator"
                 className="w-full flex-1 border-none bg-[#05070B]"
                 title="Arena Live Home Feed"
                 allow="camera; microphone; geolocation"
@@ -778,7 +778,7 @@ export const BroadcasterDashboard: React.FC = () => {
                 <button
                   onClick={() => {
                     const iframe = document.getElementById("active-playable-game") as HTMLIFrameElement;
-                    if (iframe) iframe.src = "/";
+                    if (iframe) iframe.src = "/garage";
                   }}
                   className="flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 text-white font-bold uppercase text-[9px] tracking-wider px-3.5 py-2.5 rounded-xl border border-slate-700 transition cursor-pointer"
                 >
@@ -786,7 +786,7 @@ export const BroadcasterDashboard: React.FC = () => {
                   <span>Reset Session</span>
                 </button>
                 <a
-                  href="/"
+                  href="/garage"
                   target="_blank"
                   rel="noreferrer"
                   className="flex items-center space-x-2 bg-gradient-to-r from-[#00E5FF] to-[#7C4DFF] text-white font-black uppercase text-[9px] tracking-widest px-4 py-2.5 rounded-xl shadow-[0_0_15px_rgba(0,229,255,0.25)] hover:shadow-[0_0_20px_rgba(0,229,255,0.4)] transition"
@@ -816,7 +816,7 @@ export const BroadcasterDashboard: React.FC = () => {
               </div>
               <iframe
                 id="active-playable-game"
-                src="/"
+                src="/garage"
                 className="w-full flex-1 border-none bg-[#020408]"
                 title="My Race Arena Gameplay"
                 allow="camera; microphone; geolocation"
