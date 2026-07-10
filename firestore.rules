@@ -49,11 +49,8 @@ service cloud.firestore {
 
     // USERS COLLECTION
     match /users/{userId} {
-      // Individual users can retrieve their own profiles.
-      allow get: if isSignedIn() && request.auth.uid == userId;
-
-      // Admins & broadcasters can read profiles.
-      allow get: if isSignedIn() && (isAdmin() || isBroadcaster());
+      // Individual users can retrieve their own profiles, and admins/broadcasters can read all profiles.
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin() || isBroadcaster());
 
       // Only admins have search/listing privileges over all user email/PII profiles
       allow list: if isAdmin();

@@ -58,11 +58,25 @@ const getRoleFromEmail = (email: string | null): UserRole => {
   return "user";
 };
 
+const normalizeRole = (role: string | null | undefined): UserRole => {
+  if (!role) return "user";
+  const r = role.toLowerCase().trim();
+  if (r === "admin") return "admin";
+  if (r === "broadcaster") return "broadcaster";
+  return "user";
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [loginError, setLoginError] = useState<string | null>(null);
+
+  useEffect(() => {
+    console.log("Current User:", user);
+    console.log("Current Profile:", profile);
+    console.log("Loading:", loading);
+  }, [user, profile, loading]);
 
   const clearLoginError = useCallback(() => setLoginError(null), []);
 
@@ -79,7 +93,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (docSnap.exists()) {
       const data = docSnap.data();
-      if ((data.role !== currentRole && !isGuest) || (data.isGuest === undefined && isGuest !== undefined)) {
+      const normalizedDbRole = normalizeRole(data.role);
+      
+      if ((normalizedDbRole !== currentRole && !isGuest) || (data.isGuest === undefined && isGuest !== undefined)) {
         const updatedData = {
           ...data,
           role: isGuest ? "user" : currentRole,
@@ -104,7 +120,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         name: data.name || firebaseUser.displayName || "Racer",
         email: data.email || firebaseUser.email || "",
         photoURL: data.photoURL || firebaseUser.photoURL || "",
-        role: (data.role || (isGuest ? "user" : currentRole)) as UserRole,
+        role: normalizeRole(normalizedDbRole || (isGuest ? "user" : currentRole)),
         createdAt: data.createdAt,
         isGuest: data.isGuest !== undefined ? data.isGuest : isGuest,
       };
@@ -128,6 +144,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      console.log("Firebase User:", firebaseUser);
       if (!firebaseUser) {
         setUser(null);
         setProfile(null);
@@ -138,6 +155,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(firebaseUser);
       try {
         const finalProfile = await ensureUserProfile(firebaseUser);
+        console.log("Firestore Profile:", finalProfile);
         setProfile(finalProfile);
         setLoginError(null);
       } catch (dbError: any) {
@@ -156,7 +174,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           name: firebaseUser.displayName || "Racer",
           email: firebaseUser.email || "",
           photoURL: firebaseUser.photoURL || "",
-          role: getRoleFromEmail(firebaseUser.email),
+          role: normalizeRole(getRoleFromEmail(firebaseUser.email)),
           isGuest: firebaseUser.isAnonymous,
           createdAt: new Date(),
         });
