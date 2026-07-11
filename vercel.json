@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/__/auth/:path*",
-      "destination": "https://gen-lang-client-0751322500.firebaseapp.com/__/auth/:path*"
+      "destination": "https://YOUR_FIREBASE_PROJECT_ID.firebaseapp.com/__/auth/:path*"
     },
     {
       "source": "/((?!api|assets|static|favicon.ico).*)",
