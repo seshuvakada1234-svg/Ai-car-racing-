@@ -408,10 +408,37 @@ export async function loadSpecificCarModel(
 
     const fetchBuffer = async (target: string) => {
       const proxyUrl = `/api/proxy?url=${encodeURIComponent(target)}`;
-      const r = await fetch(proxyUrl);
-      if (!r.ok) throw new Error(`Download failed (${r.status}) for ${target}`);
+      let r;
+      try {
+        r = await fetch(proxyUrl);
+        const contentType = r.headers.get("content-type") || "";
+        if (!r.ok || contentType.includes("text/html")) {
+          throw new Error(`Proxy not available or HTML returned: status ${r.status}, type ${contentType}`);
+        }
+      } catch (proxyErr) {
+        console.warn(`[procedural] Proxy fetch failed for ${target}, falling back to direct CDN fetch:`, proxyErr);
+        r = await fetch(target);
+        if (!r.ok) throw new Error(`Direct download failed (${r.status}) for ${target}`);
+      }
+
       const buf = await r.arrayBuffer();
-      if (buf.byteLength < 1000 || new TextDecoder().decode(buf.slice(0, 20)).startsWith("#")) {
+      const firstChars = new TextDecoder().decode(buf.slice(0, 20));
+      if (buf.byteLength < 1000 || firstChars.startsWith("#") || firstChars.startsWith("<!DOCTYPE") || firstChars.startsWith("<html")) {
+        if (!r.url.includes(target)) {
+          console.warn(`[procedural] Proxy returned HTML for ${target}, attempting direct fetch fallback...`);
+          try {
+            const directRes = await fetch(target);
+            if (directRes.ok) {
+              const directBuf = await directRes.arrayBuffer();
+              const directFirstChars = new TextDecoder().decode(directBuf.slice(0, 20));
+              if (directBuf.byteLength >= 1000 && !directFirstChars.startsWith("#") && !directFirstChars.startsWith("<!DOCTYPE") && !directFirstChars.startsWith("<html")) {
+                return directBuf;
+              }
+            }
+          } catch (directErr) {
+            console.error(`[procedural] Direct fallback fetch failed:`, directErr);
+          }
+        }
         throw new Error("File is text/HTML, not GLB");
       }
       return buf;
@@ -529,14 +556,46 @@ export async function loadCarModel(): Promise<THREE.Group> {
   const mainUrl = "https://pub-a248afed72844944a7565dc9cbaacbb0.r2.dev/cars/lamborghini_aventador.glb";
 
   const proxyUrl = `/api/proxy?url=${encodeURIComponent(mainUrl)}`;
-  const response = await fetch(proxyUrl);
-  if (!response.ok) {
-    throw new Error("Download failed");
+  let response;
+  try {
+    response = await fetch(proxyUrl);
+    const contentType = response.headers.get("content-type") || "";
+    if (!response.ok || contentType.includes("text/html")) {
+      throw new Error(`Proxy failed or returned HTML: status ${response.status}, type ${contentType}`);
+    }
+  } catch (proxyErr) {
+    console.warn(`[procedural] Proxy load failed for ${mainUrl}, falling back to direct CDN fetch:`, proxyErr);
+    response = await fetch(mainUrl);
+    if (!response.ok) {
+      throw new Error("Download failed");
+    }
   }
 
-  const arrayBuffer = await response.arrayBuffer();
-  if (arrayBuffer.byteLength < 1000 || new TextDecoder().decode(arrayBuffer.slice(0, 20)).startsWith("#")) {
-    throw new Error("File is text, not GLB");
+  let arrayBuffer = await response.arrayBuffer();
+  let firstChars = new TextDecoder().decode(arrayBuffer.slice(0, 20));
+  if (arrayBuffer.byteLength < 1000 || firstChars.startsWith("#") || firstChars.startsWith("<!DOCTYPE") || firstChars.startsWith("<html")) {
+    if (response.url.includes("/api/proxy")) {
+      console.warn(`[procedural] Proxy returned HTML for ${mainUrl}, retrying direct...`);
+      try {
+        const directRes = await fetch(mainUrl);
+        if (directRes.ok) {
+          const directBuf = await directRes.arrayBuffer();
+          const directFirstChars = new TextDecoder().decode(directBuf.slice(0, 20));
+          if (directBuf.byteLength >= 1000 && !directFirstChars.startsWith("#") && !directFirstChars.startsWith("<!DOCTYPE") && !directFirstChars.startsWith("<html")) {
+            arrayBuffer = directBuf;
+            firstChars = directFirstChars;
+          } else {
+            throw new Error("File is text, not GLB");
+          }
+        } else {
+          throw new Error("File is text, not GLB");
+        }
+      } catch (directErr) {
+        throw new Error(`File is text, not GLB and direct fallback failed: ${directErr}`);
+      }
+    } else {
+      throw new Error("File is text, not GLB");
+    }
   }
 
   const loader = new GLTFLoader();

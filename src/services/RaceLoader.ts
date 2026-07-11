@@ -58,13 +58,27 @@ export class RaceLoader {
       if (asset?.url) {
         try {
           const proxyUrl = `/api/proxy?url=${encodeURIComponent(asset.url)}`;
-          const res = await fetch(proxyUrl);
+          let res = await fetch(proxyUrl);
+          const contentType = res.headers.get("content-type") || "";
+          if (!res.ok || contentType.includes("text/html")) {
+            console.warn(`RaceLoader: Proxy fetch failed or returned HTML, retrying direct CDN fetch...`);
+            res = await fetch(asset.url);
+          }
           if (res.ok) {
             localBlob = await res.blob();
             console.log(`RaceLoader: Streamed ${carMapKey} successfully from CDN.`);
           }
         } catch (err) {
-          console.warn(`RaceLoader: Failed to stream ${carMapKey} from CDN, fell back to procedural backups:`, err);
+          console.warn(`RaceLoader: Failed to stream ${carMapKey} via proxy, trying direct fallback...`, err);
+          try {
+            const res = await fetch(asset.url);
+            if (res.ok) {
+              localBlob = await res.blob();
+              console.log(`RaceLoader: Direct fallback streamed ${carMapKey} successfully from CDN.`);
+            }
+          } catch (directErr) {
+            console.error(`RaceLoader: Direct fallback fetch failed as well:`, directErr);
+          }
         }
       }
     }

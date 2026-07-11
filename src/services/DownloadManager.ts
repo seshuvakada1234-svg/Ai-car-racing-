@@ -39,11 +39,12 @@ export class DownloadManager {
     let response;
     try {
       response = await fetch(proxyUrl);
-      if (!response.ok) {
-        throw new Error(`Proxy status: ${response.status}`);
+      const contentType = response.headers.get("content-type") || "";
+      if (!response.ok || contentType.includes("text/html")) {
+        throw new Error(`Proxy response not valid: status ${response.status}, type ${contentType}`);
       }
     } catch (proxyErr) {
-      console.warn(`[DownloadManager] Proxy download failed, falling back to direct CDN fetch:`, proxyErr);
+      console.warn(`[DownloadManager] Proxy download failed or returned HTML, falling back to direct CDN fetch:`, proxyErr);
       response = await fetch(url);
       if (!response.ok) {
         throw new Error(`Failed to download asset: ${name}`);

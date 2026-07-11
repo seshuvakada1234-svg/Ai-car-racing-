@@ -158,11 +158,12 @@ export class ThreeAssetLoader {
         
         try {
           response = await fetch(proxyUrl);
-          if (!response.ok) {
-            throw new Error(`Proxy status: ${response.status}`);
+          const contentType = response.headers.get("content-type") || "";
+          if (!response.ok || contentType.includes("text/html")) {
+            throw new Error(`Proxy status: ${response.status}, type: ${contentType}`);
           }
         } catch (proxyErr) {
-          console.warn(`[AssetManager] Proxy load failed, falling back to direct CDN fetch:`, proxyErr);
+          console.warn(`[AssetManager] Proxy load failed or returned HTML, falling back to direct CDN fetch:`, proxyErr);
           response = await fetch(finalUrl);
           usedUrl = finalUrl;
           if (!response.ok) {
