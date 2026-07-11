@@ -153,11 +153,24 @@ export class ThreeAssetLoader {
       try {
         console.log(`Preflight fetching GLTF asset via proxy: ${finalUrl}`);
         const proxyUrl = `/api/proxy?url=${encodeURIComponent(finalUrl)}`;
-        const response = await fetch(proxyUrl);
-        if (!response.ok) {
-          console.error(`Asset missing: ${finalUrl} failed with status ${response.status}`);
-          throw new Error("Asset missing");
+        let response;
+        let usedUrl = proxyUrl;
+        
+        try {
+          response = await fetch(proxyUrl);
+          if (!response.ok) {
+            throw new Error(`Proxy status: ${response.status}`);
+          }
+        } catch (proxyErr) {
+          console.warn(`[AssetManager] Proxy load failed, falling back to direct CDN fetch:`, proxyErr);
+          response = await fetch(finalUrl);
+          usedUrl = finalUrl;
+          if (!response.ok) {
+            console.error(`Asset missing: ${finalUrl} failed with status ${response.status}`);
+            throw new Error("Asset missing");
+          }
         }
+
         const contentType = response.headers.get("content-type") || "";
         if (contentType.includes("text/html")) {
           console.error(`Asset missing: ${finalUrl} returned HTML page instead of a binary GLTF file.`);
@@ -166,7 +179,7 @@ export class ThreeAssetLoader {
 
         return await new Promise<any>((resolve, reject) => {
           this.gltfLoader.load(
-            proxyUrl,
+            usedUrl,
             (gltf) => {
               resolve(gltf);
             },

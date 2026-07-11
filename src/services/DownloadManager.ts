@@ -36,9 +36,18 @@ export class DownloadManager {
     }
 
     const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
-    const response = await fetch(proxyUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to download asset: ${name}`);
+    let response;
+    try {
+      response = await fetch(proxyUrl);
+      if (!response.ok) {
+        throw new Error(`Proxy status: ${response.status}`);
+      }
+    } catch (proxyErr) {
+      console.warn(`[DownloadManager] Proxy download failed, falling back to direct CDN fetch:`, proxyErr);
+      response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to download asset: ${name}`);
+      }
     }
 
     // Keep Response cloned for Cache API
