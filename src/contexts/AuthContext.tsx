@@ -143,47 +143,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      console.log("Firebase User:", firebaseUser);
-      if (!firebaseUser) {
-        setUser(null);
-        setProfile(null);
-        setLoading(false);
-        return;
-      }
+    let unsubscribe: () => void = () => {};
+    try {
+      unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        console.log("Firebase User:", firebaseUser);
+        if (!firebaseUser) {
+          setUser(null);
+          setProfile(null);
+          setLoading(false);
+          return;
+        }
 
-      setUser(firebaseUser);
-      try {
-        const finalProfile = await ensureUserProfile(firebaseUser);
-        console.log("Firestore Profile:", finalProfile);
-        setProfile(finalProfile);
-        setLoginError(null);
-      } catch (dbError: any) {
-        // Surface the real reason instead of hiding it. Most commonly this is
-        // a Firestore security-rules rejection on create/read for the new user.
-        console.error("Failed to load/create user profile:", dbError);
-        handleFirestoreError(dbError, OperationType.GET, `users/${firebaseUser.uid}`);
-        setLoginError(
-          dbError?.code === "permission-denied"
-            ? "Your account signed in, but we couldn't create your player profile (permission denied). Check Firestore rules."
-            : "Signed in, but couldn't load your player profile. Please try again."
-        );
-        // Fall back to a local-only profile so the app isn't fully blocked.
-        setProfile({
-          uid: firebaseUser.uid,
-          name: firebaseUser.displayName || "Racer",
-          email: firebaseUser.email || "",
-          photoURL: firebaseUser.photoURL || "",
-          role: normalizeRole(getRoleFromEmail(firebaseUser.email)),
-          isGuest: firebaseUser.isAnonymous,
-          createdAt: new Date(),
-        });
-      } finally {
-        setLoading(false);
-      }
-    });
+        setUser(firebaseUser);
+        try {
+          const finalProfile = await ensureUserProfile(firebaseUser);
+          console.log("Firestore Profile:", finalProfile);
+          setProfile(finalProfile);
+          setLoginError(null);
+        } catch (dbError: any) {
+          // Surface the real reason instead of hiding it. Most commonly this is
+          // a Firestore security-rules rejection on create/read for the new user.
+          console.error("Failed to load/create user profile:", dbError);
+          handleFirestoreError(dbError, OperationType.GET, `users/${firebaseUser.uid}`);
+          setLoginError(
+            dbError?.code === "permission-denied"
+              ? "Your account signed in, but we couldn't create your player profile (permission denied). Check Firestore rules."
+              : "Signed in, but couldn't load your player profile. Please try again."
+          );
+          // Fall back to a local-only profile so the app isn't fully blocked.
+          setProfile({
+            uid: firebaseUser.uid,
+            name: firebaseUser.displayName || "Racer",
+            email: firebaseUser.email || "",
+            photoURL: firebaseUser.photoURL || "",
+            role: normalizeRole(getRoleFromEmail(firebaseUser.email)),
+            isGuest: firebaseUser.isAnonymous,
+            createdAt: new Date(),
+          });
+        } finally {
+          setLoading(false);
+        }
+      });
+    } catch (authError) {
+      console.warn("[AuthContext] Firebase Auth subscription failed, entering fallback local mode:", authError);
+      setUser(null);
+      setProfile(null);
+      setLoading(false);
+    }
 
-    return () => unsubscribe();
+    return () => {
+      if (typeof unsubscribe === "function") {
+        unsubscribe();
+      }
+    };
   }, []);
 
   const loginWithGoogle = async () => {
