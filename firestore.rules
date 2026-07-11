@@ -42,15 +42,18 @@ service cloud.firestore {
     }
 
     function getExpectedRole(email) {
-      return (email.lower() == 'seshuvakada1234@gmail.com' || email.lower() == 'resumepro.ads@gmail.com') ? 'admin' :
-             (email.lower() == 'seshuvakada522@gmail.com' || email.lower() == 'seshuvakada5@gmail.com') ? 'broadcaster' :
-             'user';
+      return (email == null || email == '') ? 'user' :
+             (email.lower() == 'seshuvakada1234@gmail.com' || email.lower() == 'resumepro.ads@gmail.com') ? 'admin' :
+             ((email.lower() == 'seshuvakada522@gmail.com' || email.lower() == 'seshuvakada5@gmail.com') ? 'broadcaster' : 'user');
     }
 
     // USERS COLLECTION
     match /users/{userId} {
-      // Individual users can retrieve their own profiles, and admins/broadcasters can read all profiles.
-      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin() || isBroadcaster());
+      // Individual users can retrieve their own profiles safely
+      allow get: if isSignedIn() && request.auth.uid == userId;
+
+      // Admins and broadcasters can read all profiles
+      allow get: if isSignedIn() && (isAdmin() || isBroadcaster());
 
       // Only admins have search/listing privileges over all user email/PII profiles
       allow list: if isAdmin();
@@ -59,7 +62,7 @@ service cloud.firestore {
       // and ensure the isGuest flag matches their sign_in_provider.
       allow create: if isSignedIn() && request.auth.uid == userId && 
                     request.resource.data.get('role', 'user') == getExpectedRole(request.auth.token.get('email', '')) &&
-                    request.resource.data.get('isGuest', false) == (request.auth.token.get('firebase', {}).get('sign_in_provider', '') == 'anonymous');
+                    request.resource.data.get('isGuest', false) == ('firebase' in request.auth.token && 'sign_in_provider' in request.auth.token.firebase && request.auth.token.firebase.sign_in_provider == 'anonymous');
 
       // On update, prevent role escalation by enforcing the same expected role check.
       allow update: if isSignedIn() && request.auth.uid == userId && 
