@@ -58,11 +58,9 @@ service cloud.firestore {
       // Only admins have search/listing privileges over all user email/PII profiles
       allow list: if isAdmin();
 
-      // On creation, ensure the role matches their expected role based on verified email,
-      // and ensure the isGuest flag matches their sign_in_provider.
+      // On creation, ensure the role matches their expected role based on verified email.
       allow create: if isSignedIn() && request.auth.uid == userId && 
-                    request.resource.data.get('role', 'user') == getExpectedRole(request.auth.token.get('email', '')) &&
-                    request.resource.data.get('isGuest', false) == ('firebase' in request.auth.token && 'sign_in_provider' in request.auth.token.firebase && request.auth.token.firebase.sign_in_provider == 'anonymous');
+                    request.resource.data.get('role', 'user') == getExpectedRole(request.auth.token.get('email', ''));
 
       // On update, prevent role escalation by enforcing the same expected role check.
       allow update: if isSignedIn() && request.auth.uid == userId && 
