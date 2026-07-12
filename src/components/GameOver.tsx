@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from "react";
+import React, { useEffect } from "react";
 import { CarState } from "../types";
-import { RotateCcw, Home, Clock, Sparkles } from "lucide-react";
+import { RotateCcw, Home, Clock, Sparkles, Award } from "lucide-react";
 
 interface GameOverProps {
   player: CarState;
@@ -22,6 +22,10 @@ export const GameOver: React.FC<GameOverProps> = ({
   onRestart,
   onHome,
 }) => {
+  useEffect(() => {
+    console.log("Results screen opened");
+  }, []);
+
   // Rank by: (1) finished cars first, ordered by finishTime; then (2) unfinished
   // cars by distance covered. racePosition is used only as a final tiebreaker.
   const fullLeaderboard = [player, ...opponents].slice().sort((a, b) => {

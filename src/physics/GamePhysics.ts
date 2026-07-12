@@ -852,9 +852,16 @@ export class GamePhysicsService {
               const clock = (window as any).raceElapsedTime;
               car.finishTime = typeof clock === "number" ? clock : performance.now() / 1000;
               car.currentCheckpointIndex = advancedTo;
+              if (car.id === "player") {
+                console.log("Lap completed", car.currentLap);
+                console.log("Race completed");
+              }
             } else {
               car.currentLap += 1;
               car.currentCheckpointIndex = 0;
+              if (car.id === "player") {
+                console.log("Lap completed", car.currentLap);
+              }
             }
           } else {
             car.currentCheckpointIndex = advancedTo;
@@ -869,8 +876,15 @@ export class GamePhysicsService {
                 car.isFinished = true;
                 const clock = (window as any).raceElapsedTime;
                 car.finishTime = typeof clock === "number" ? clock : performance.now() / 1000;
+                if (car.id === "player") {
+                  console.log("Lap completed", car.currentLap);
+                  console.log("Race completed");
+                }
               } else {
                 car.currentLap += 1;
+                if (car.id === "player") {
+                  console.log("Lap completed", car.currentLap);
+                }
               }
             }
           }
@@ -912,9 +926,16 @@ export class GamePhysicsService {
               car.isFinished = true;
               const clock = (window as any).raceElapsedTime;
               car.finishTime = typeof clock === "number" ? clock : performance.now() / 1000;
+              if (car.id === "player") {
+                console.log("Lap completed", car.currentLap);
+                console.log("Race completed");
+              }
             } else {
               car.currentLap += 1;
               this.carHasPassedMidpoint.set(car.id, false);
+              if (car.id === "player") {
+                console.log("Lap completed", car.currentLap);
+              }
             }
           }
         }

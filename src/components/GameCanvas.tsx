@@ -250,6 +250,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     // Tighter far plane on low/mid tier saves enormous fillrate & culling cost.
     const farPlane = engineCfg.farPlane;
     const camera = new THREE.PerspectiveCamera(62, 1, 0.4, farPlane);
+    console.log("Camera active", camera);
 
 
     // --- 2. ENVIRONMENT COLOR MAP FOR REFLECTIONS ---
@@ -577,6 +578,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         console.log("velocity", vehicle.velocity);
         console.log("playerCar", playerCar);
         console.log("physics awake", !rigidBody.isSleeping());
+        console.log("Camera active", camera);
       }
 
       const activeWeather = weatherRef.current;
@@ -818,6 +820,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       cancelAnimationFrame(animationId);
       resizeObs.disconnect();
       try { unsubscribeCfg(); } catch {}
+      console.log("Scene disposed");
 
 
       // Clean up event listeners on our persistent canvas

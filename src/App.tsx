@@ -14,6 +14,7 @@ import { HUD } from "./components/HUD";
 import { Menu } from "./components/Menu";
 import { GameOver } from "./components/GameOver";
 import { SplashScreen } from "./components/SplashScreen";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { OrientationForceLandscape } from "./components/OrientationGuard";
 import {
   Trophy,
@@ -225,26 +226,35 @@ const RacingCanvasUnit: React.FC<RacingCanvasUnitProps> = ({
 
       {/* GameOver celebration statistics and leaderboards link */}
       {phase === "completed" && currentPl && (
-        <GameOver
-          player={currentPl}
-          opponents={currentOpponents}
-          elapsedTime={elapsedTime}
-          onRestart={async () => {
-            if (mp.room) {
-              if (mp.room.hostId === mp.playerId) {
-                mp.startRaceNow();
+        <ErrorBoundary
+          fallback={null}
+          onError={(error, errorInfo) => {
+            console.error("GameOver rendering crashed! Automatically navigating to Garage.", error, errorInfo);
+            setPhase("menu");
+            navigate("/garage");
+          }}
+        >
+          <GameOver
+            player={currentPl}
+            opponents={currentOpponents}
+            elapsedTime={elapsedTime}
+            onRestart={async () => {
+              if (mp.room) {
+                if (mp.room.hostId === mp.playerId) {
+                  mp.startRaceNow();
+                }
+              } else {
+                handleRestartRace();
               }
-            } else {
-              handleRestartRace();
-            }
-          }}
-          onHome={() => {
-            if (mp.room) {
-              mp.leaveRoom();
-            }
-            handleHomeMenu();
-          }}
-        />
+            }}
+            onHome={() => {
+              if (mp.room) {
+                mp.leaveRoom();
+              }
+              handleHomeMenu();
+            }}
+          />
+        </ErrorBoundary>
       )}
 
       {/* Cinematic countdown elements */}
@@ -316,6 +326,13 @@ function AppBody() {
 
   // Synchronous car entities list
   const [cars, setCars] = useState<CarState[]>([]);
+
+  // Garage navigation log whenever location changes to /garage
+  useEffect(() => {
+    if (location.pathname === "/garage") {
+      console.log("Garage navigation");
+    }
+  }, [location.pathname]);
 
   // Controls key triggers tracking
   const [controls, setControls] = useState<ControlsState>({
@@ -712,36 +729,40 @@ function AppBody() {
 
   // Back to Main configuration screen
   const handleHomeMenu = () => {
+    console.log("Garage navigation");
     setPhase("menu");
     navigate("/garage");
   };
 
   // Submit highest score to leaderboard
   const handleRaceFinish = async () => {
-    setPhase("completed");
-    if (currentPl) {
-      try {
+    try {
+      console.log("Race completed");
+      setPhase("completed");
+      if (currentPl) {
         await addDoc(collection(db, "leaderboards"), {
           playerName: profile?.name || currentPl.name || "Anonymous Racer",
           selectedCar: settings?.selectedCar || "ferrari",
           topSpeed: Math.floor(currentPl.speed * 3.6) || 280,
           createdAt: serverTimestamp(),
         });
-      } catch (e) {
-        console.error("Error submitting score record:", e);
       }
-    }
 
-    // Auto-delete the room if in multiplayer and this client is the host
-    if (mp.room && mp.room.hostId === mp.playerId) {
-      try {
+      // Auto-delete the room if in multiplayer and this client is the host
+      if (mp.room && mp.room.hostId === mp.playerId) {
         // Wait 3 seconds so regular players can receive final state updates before deletion
         setTimeout(async () => {
-          mp.deleteRoom();
+          try {
+            await mp.deleteRoom();
+          } catch (e) {
+            console.error("Error auto-deleting finished room:", e);
+          }
         }, 3000);
-      } catch (e) {
-        console.error("Error auto-deleting finished room:", e);
       }
+    } catch (e) {
+      console.error("Async operation failed during race finish flow. Navigating to Garage:", e);
+      setPhase("menu");
+      navigate("/garage");
     }
   };
 
