@@ -423,25 +423,42 @@ export const WaitingLobbyPage: React.FC = () => {
 
   // 4. Local Countdown Engager
   useEffect(() => {
-    if (!room || room.status !== "countdown") {
+    if (!room) return;
+
+    // If anyone left or isn't ready during starting, host resets back to waiting
+    if (room.status === "starting" && !allReady) {
+      if (isHost) {
+        console.log("A player left or isn't ready anymore! Resetting status to waiting.");
+        NormalRoomService.setRoomStatus(normalizedCode, "waiting").catch((err) => {
+          console.error("Error resetting room status:", err);
+        });
+      }
+      setLocalSecondsLeft(null);
+      return;
+    }
+
+    if (room.status !== "starting" && room.status !== "countdown") {
       setLocalSecondsLeft(null);
       return;
     }
 
     if (localSecondsLeft === null) {
-      setLocalSecondsLeft(5);
+      setLocalSecondsLeft(3);
+      setCountdownMsg("GET READY");
     }
 
     const interval = setInterval(() => {
       setLocalSecondsLeft((prev) => {
-        if (prev === null) return 5;
+        if (prev === null) return 3;
         if (prev <= 1) {
           clearInterval(interval);
           setCountdownMsg("GO!");
 
           setTimeout(() => {
             if (isHost) {
-              NormalRoomService.setRoomStatus(normalizedCode, "racing");
+              NormalRoomService.setRoomStatus(normalizedCode, "racing").catch((err) => {
+                console.error("Error setting status to racing:", err);
+              });
             }
             navigate(`/race/${normalizedCode}`);
           }, 600);
@@ -453,11 +470,11 @@ export const WaitingLobbyPage: React.FC = () => {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [room?.status, isHost, navigate, normalizedCode, localSecondsLeft]);
+  }, [room?.status, allReady, isHost, navigate, normalizedCode, localSecondsLeft]);
 
-  // Redirect to active race if state updates to racing or starting
+  // Redirect to active race if state updates to racing
   useEffect(() => {
-    if (room?.status === "racing" || room?.status === "starting") {
+    if (room?.status === "racing") {
       navigate(`/race/${normalizedCode}`);
     }
   }, [room?.status, navigate, normalizedCode]);
@@ -557,7 +574,8 @@ export const WaitingLobbyPage: React.FC = () => {
   // Ready State Calculation
   const readyCount = players.filter(p => p.ready).length;
   const totalCount = players.length;
-  const allReady = players.every(p => p.ready && (room?.mapId !== "race2map" || p.mapReady));
+  const allPlayersReady = players.length === (room.maxPlayers || 3) && players.every(p => p.ready === true);
+  const allReady = allPlayersReady;
 
   return (
     <div id="room-waiting-lobby" className="w-full max-w-7xl mx-auto py-8 px-4 text-white space-y-8 flex flex-col relative">
@@ -690,21 +708,20 @@ export const WaitingLobbyPage: React.FC = () => {
                     </div>
 
                     <div className="flex items-center space-x-2 shrink-0">
-                      {isPlayerHost ? (
+                      {isPlayerHost && (
                         <div className="flex items-center space-x-1 bg-amber-500/10 border border-amber-500/25 text-amber-500 font-mono font-black text-[7px] tracking-widest px-2 py-1 rounded uppercase">
                           <Crown className="w-2.5 h-2.5 text-amber-400" />
                           <span>HOST</span>
                         </div>
-                      ) : (
-                        <div className={`flex items-center space-x-1 font-mono font-black text-[8px] tracking-wider px-2.5 py-1 rounded-full uppercase border ${
-                          plr.ready 
-                            ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-sm shadow-emerald-500/5" 
-                            : "bg-red-500/10 border-red-500/20 text-red-400"
-                        }`}>
-                          <span className="text-[10px] leading-none mr-0.5">•</span>
-                          <span>{plr.ready ? "READY" : "NOT READY"}</span>
-                        </div>
                       )}
+                      <div className={`flex items-center space-x-1 font-mono font-black text-[8px] tracking-wider px-2.5 py-1 rounded-full uppercase border ${
+                        plr.ready 
+                          ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-sm shadow-emerald-500/5" 
+                          : "bg-red-500/10 border-red-500/20 text-red-400"
+                      }`}>
+                        <span className="text-[10px] leading-none mr-0.5">{plr.ready ? "🟢" : "🔴"}</span>
+                        <span>{plr.ready ? "READY" : "NOT READY"}</span>
+                      </div>
                     </div>
                   </div>
                 );
@@ -1042,7 +1059,7 @@ export const WaitingLobbyPage: React.FC = () => {
             </div>
 
             {/* COUNTDOWN TICKER OVERLAY */}
-            {room.status === "countdown" && localSecondsLeft !== null && (
+            {(room.status === "countdown" || room.status === "starting") && localSecondsLeft !== null && (
               <div className="flex items-center space-x-3 bg-pink-600/10 border border-pink-500/20 px-5 py-3 rounded-2xl animate-pulse">
                 <div className="text-3xl font-mono font-black text-pink-500">{localSecondsLeft > 0 ? localSecondsLeft : "GO!"}</div>
                 <div className="text-left">
@@ -1079,19 +1096,28 @@ export const WaitingLobbyPage: React.FC = () => {
             {isHost && (
               <button
                 onClick={() => {
-                  if (allReady) {
+                  if (allPlayersReady) {
                     NormalRoomService.setRoomStatus(normalizedCode, "starting");
                   }
                 }}
-                disabled={!allReady || players.length === 0}
+                disabled={!allPlayersReady}
                 className={`px-8 py-4.5 font-black uppercase text-[11px] tracking-widest rounded-2xl transition duration-200 flex items-center justify-center space-x-2 shadow-lg min-w-[200px] ${
-                  allReady && players.length > 0
+                  allPlayersReady
                     ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-emerald-500/25 hover:brightness-110 hover:scale-[1.02] cursor-pointer active:scale-[0.98]"
                     : "bg-slate-900 border border-white/5 text-slate-500 cursor-not-allowed"
                 }`}
               >
-                <Play className="w-4 h-4 shrink-0" />
-                <span>START THE RACE</span>
+                {allPlayersReady ? (
+                  <>
+                    <Play className="w-4 h-4 shrink-0" />
+                    <span>START THE RACE</span>
+                  </>
+                ) : (
+                  <>
+                    <Loader2 className="w-4 h-4 shrink-0 animate-spin text-slate-500" />
+                    <span>WAITING FOR PLAYERS...</span>
+                  </>
+                )}
               </button>
             )}
 

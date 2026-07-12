@@ -20,14 +20,17 @@ import { RoomPlayer, RoomState } from "./RoomState";
 
 export interface NormalPlayer {
   uid: string;
+  name?: string;
   playerName: string;
   photoURL: string;
   joinedAt: number;
   ready: boolean;
+  selectedCar?: string;
   carId?: string;
   carColor?: string;
 
   // Map download fields
+  mapDownloaded?: boolean;
   mapReady?: boolean;
   downloadProgress?: number;
   downloadedMB?: number;
@@ -217,12 +220,15 @@ export class NormalRoomService {
         const d = doc.data();
         list.push({
           uid: d.uid || doc.id,
+          name: d.name || d.playerName || d.nickname || "Driver",
           playerName: d.playerName || d.nickname || "Driver",
           photoURL: d.photoURL || "",
           joinedAt: d.joinedAt || Date.now(),
           ready: d.ready ?? d.isReady ?? true,
+          selectedCar: d.selectedCar || d.carId || "porsche_911_gt3",
           carId: d.carId || "porsche_911_gt3",
           carColor: d.carColor,
+          mapDownloaded: d.mapDownloaded ?? d.mapReady ?? false,
           mapReady: d.mapReady,
           downloadProgress: d.downloadProgress,
           downloadedMB: d.downloadedMB,

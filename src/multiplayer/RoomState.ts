@@ -19,6 +19,11 @@ export interface RoomPlayer {
   isHost: boolean;
   isAI: boolean;
 
+  // New properties
+  name?: string;
+  selectedCar?: string;
+  mapDownloaded?: boolean;
+
   // Map download synchronizations
   mapReady?: boolean;
   downloadProgress?: number;

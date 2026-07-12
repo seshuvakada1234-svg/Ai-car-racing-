@@ -151,13 +151,17 @@ export class RoomService {
       const hostPlayer: RoomPlayer = {
         uid: hostId,
         id: hostId, // compatibility
+        name: hostName,
         playerName: hostName,
         nickname: hostName, // compatibility
         photoURL: hostPhotoURL || "",
         joinedAt: Date.now(),
-        ready: true,
-        isReady: true, // compatibility
+        ready: false,
+        isReady: false, // compatibility
+        selectedCar: selectedCar,
         carId: selectedCar,
+        mapDownloaded: false,
+        mapReady: false,
         isHost: true,
         isAI: false,
       };
@@ -267,13 +271,17 @@ export class RoomService {
         const newPlayer: RoomPlayer = {
           uid: playerId,
           id: playerId, // compatibility
+          name: playerName,
           playerName,
           nickname: playerName, // compatibility
           photoURL: playerPhotoURL || "",
           joinedAt: Date.now(),
-          ready: isHostPlayer ? true : false,
-          isReady: isHostPlayer ? true : false, // compatibility
+          ready: false,
+          isReady: false, // compatibility
+          selectedCar: selectedCar,
           carId: selectedCar,
+          mapDownloaded: false,
+          mapReady: false,
           isHost: isHostPlayer,
           isAI: false,
         };
@@ -572,11 +580,16 @@ export class RoomService {
         const room = snap.data() as RoomState;
         const players = room.players || [];
         
+        const isCompleted = progress >= 100 || mapReady;
+
         const updatedPlayers = players.map((p) => {
           if (p.uid === playerId) {
             return {
               ...p,
-              mapReady,
+              mapReady: isCompleted,
+              mapDownloaded: isCompleted,
+              ready: isCompleted,
+              isReady: isCompleted,
               downloadProgress: progress,
               downloadedMB,
               totalMB,
@@ -591,7 +604,10 @@ export class RoomService {
         });
 
         transaction.set(playerRef, {
-          mapReady,
+          mapReady: isCompleted,
+          mapDownloaded: isCompleted,
+          ready: isCompleted,
+          isReady: isCompleted,
           downloadProgress: progress,
           downloadedMB,
           totalMB,
