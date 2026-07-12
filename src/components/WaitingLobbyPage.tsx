@@ -60,19 +60,11 @@ export const WaitingLobbyPage: React.FC = () => {
   useEffect(() => {
     if (!room) return;
 
-    // Check if player is actually registered in the subcollection. If not, auto-join or handle gracefully
+    // Checked player registration status in the subcollection.
     const isPlayerIn = players.some((p) => p.uid === profile?.uid);
     if (!loading && players.length > 0 && !isPlayerIn && profile) {
       // Auto-join if user has roomCode but is not registered yet
       NormalRoomService.joinRoom(normalizedCode, profile.uid, profile.name, profile.photoURL).catch(() => {});
-    }
-
-    // Auto trigger countdown status transition when max players have successfully joined
-    const maxLimit = room.maxPlayers || 3;
-    if (room.status === "waiting" && players.length >= maxLimit) {
-      if (isHost) {
-        NormalRoomService.setRoomStatus(normalizedCode, "countdown");
-      }
     }
   }, [room?.status, players.length, isHost, profile, loading, normalizedCode]);
 
@@ -112,9 +104,9 @@ export const WaitingLobbyPage: React.FC = () => {
     return () => clearInterval(interval);
   }, [room?.status, isHost, navigate, normalizedCode]);
 
-  // Handle client-side remote redirection to race once status is 'racing'
+  // Handle client-side remote redirection to race once status is 'racing' or 'starting'
   useEffect(() => {
-    if (room?.status === "racing") {
+    if (room?.status === "racing" || room?.status === "starting") {
       navigate(`/race/${normalizedCode}`);
     }
   }, [room?.status, navigate, normalizedCode]);
@@ -375,20 +367,56 @@ export const WaitingLobbyPage: React.FC = () => {
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="p-3 bg-slate-950 border border-slate-900 rounded-xl text-center">
-                  <span className="text-[8px] uppercase tracking-wider text-slate-500 block">Players Joined</span>
-                  <div className="text-xl font-bold text-slate-400 mt-1">{players.length} / {room.maxPlayers || 3} Joined</div>
+                <div className="p-4 bg-slate-950 border border-slate-900 rounded-2xl text-center space-y-1.5">
+                  <span className="text-[9px] uppercase tracking-wider text-slate-500 font-mono block">LOBBY STATUS</span>
+                  
+                  {players.length < (room.maxPlayers || 3) ? (
+                    <>
+                      <div className="text-xl font-black text-pink-500 font-mono tracking-wide uppercase">
+                        Waiting for {players.length}/{room.maxPlayers || 3} players
+                      </div>
+                      <span className="text-[10px] text-slate-400 block font-sans">
+                        Need {(room.maxPlayers || 3) - players.length} more racer(s) to start
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-xl font-black text-emerald-400 font-mono tracking-wide uppercase animate-pulse">
+                        All Players Joined
+                      </div>
+                      <span className="text-[10px] text-slate-300 block font-sans">
+                        Grid slots are completely secured!
+                      </span>
+                    </>
+                  )}
                 </div>
-                {isHost && (
-                  <button
-                    onClick={() => {
-                      NormalRoomService.setRoomStatus(normalizedCode, "countdown");
-                    }}
-                    className="w-full py-3 bg-gradient-to-r from-purple-600 to-fuchsia-500 hover:brightness-110 text-white font-extrabold uppercase text-[10px] tracking-widest rounded-xl transition cursor-pointer flex items-center justify-center space-x-1.5 shadow-lg shadow-purple-500/20 active:scale-[0.98]"
-                  >
-                    <Play className="w-3.5 h-3.5" />
-                    <span>START THE RACE</span>
-                  </button>
+
+                {players.length === (room.maxPlayers || 3) ? (
+                  isHost ? (
+                    <button
+                      onClick={() => {
+                        NormalRoomService.setRoomStatus(normalizedCode, "starting");
+                      }}
+                      className="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-500 hover:brightness-110 text-white font-extrabold uppercase text-[10px] tracking-widest rounded-xl transition cursor-pointer flex items-center justify-center space-x-1.5 shadow-lg shadow-emerald-500/20 active:scale-[0.98]"
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                      <span>START THE RACE</span>
+                    </button>
+                  ) : (
+                    <div className="p-3 bg-slate-950/80 border border-indigo-500/30 text-indigo-400 font-mono text-[10px] font-black text-center uppercase tracking-widest rounded-xl animate-pulse">
+                      Waiting for host to start race...
+                    </div>
+                  )
+                ) : (
+                  isHost && (
+                    <button
+                      disabled
+                      className="w-full py-3 bg-slate-900 text-slate-500 font-extrabold uppercase text-[10px] tracking-widest rounded-xl cursor-not-allowed flex items-center justify-center space-x-1.5 border border-slate-850"
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                      <span>WAITING FOR PLAYERS</span>
+                    </button>
+                  )
                 )}
               </div>
             )}

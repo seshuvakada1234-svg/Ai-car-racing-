@@ -590,7 +590,7 @@ export const Menu: React.FC<MenuProps> = ({ onStartGame, onCreateRoom, onJoinRoo
   const handleConfirmCreateRoom = async () => {
     if (!profile) return;
     try {
-      await NormalRoomService.createRoom(
+      const finalCode = await NormalRoomService.createRoom(
         profile.uid,
         playerName || "Racer",
         profile.photoURL || "",
@@ -598,7 +598,8 @@ export const Menu: React.FC<MenuProps> = ({ onStartGame, onCreateRoom, onJoinRoo
         selectedMap,
         maxPlayers,
       );
-      subscribeToRoomListeners(generatedCode);
+      setGeneratedCode(finalCode);
+      subscribeToRoomListeners(finalCode);
       setActivePopup("lobby");
     } catch (err) {
       console.error(err);
@@ -1278,7 +1279,7 @@ export const Menu: React.FC<MenuProps> = ({ onStartGame, onCreateRoom, onJoinRoo
                     Max Player Count
                   </label>
                   <div className="flex gap-2">
-                    {[1, 2, 3].map((num) => (
+                    {[2, 3, 4].map((num) => (
                       <button
                         key={num}
                         type="button"
@@ -1527,24 +1528,45 @@ export const Menu: React.FC<MenuProps> = ({ onStartGame, onCreateRoom, onJoinRoo
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3.5 pt-1">
-                <button
-                  onClick={handleLeaveLobby}
-                  className="py-3 bg-white/5 hover:bg-white/10 text-slate-300 rounded-2xl font-black uppercase text-[10px] tracking-widest transition cursor-pointer"
-                >
-                  ABANDON ASSEMBLY
-                </button>
-                <button
-                  disabled={syncedPlayers.length < (syncedRoom?.maxPlayers || 3) && !syncedRoom?.isLiveMode}
-                  onClick={async () => {
-                    if (syncedRoom && profile && syncedRoom.ownerUid === profile.uid) {
-                      await NormalRoomService.setRoomStatus(generatedCode, "countdown");
-                    }
-                  }}
-                  className="py-3 bg-gradient-to-r from-purple-700 to-fuchsia-600 hover:brightness-110 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition shadow-lg shadow-purple-500/25 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  START RACE NOW
-                </button>
+              <div className="space-y-2.5">
+                {syncedPlayers.length < (syncedRoom?.maxPlayers || 3) ? (
+                  <div className="text-[10px] font-black text-pink-500 font-mono tracking-widest text-center uppercase animate-pulse">
+                    Waiting for {syncedPlayers.length}/{syncedRoom?.maxPlayers || 3} players
+                  </div>
+                ) : (
+                  <div className="text-[10px] font-black text-emerald-400 font-mono tracking-widest text-center uppercase">
+                    All Players Joined
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3.5 pt-1">
+                  <button
+                    onClick={handleLeaveLobby}
+                    className="py-3 bg-white/5 hover:bg-white/10 text-slate-300 rounded-2xl font-black uppercase text-[10px] tracking-widest transition cursor-pointer"
+                  >
+                    ABANDON ASSEMBLY
+                  </button>
+                  {syncedRoom && profile && syncedRoom.ownerUid === profile.uid ? (
+                    <button
+                      disabled={syncedPlayers.length < (syncedRoom?.maxPlayers || 3)}
+                      onClick={async () => {
+                        if (syncedRoom && profile && syncedRoom.ownerUid === profile.uid) {
+                          await NormalRoomService.setRoomStatus(generatedCode, "starting");
+                        }
+                      }}
+                      className="py-3 bg-gradient-to-r from-purple-700 to-fuchsia-600 hover:brightness-110 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition shadow-lg shadow-purple-500/25 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      START RACE NOW
+                    </button>
+                  ) : (
+                    <button
+                      disabled
+                      className="py-3 bg-slate-900 border border-white/5 text-slate-400 rounded-2xl font-black uppercase text-[10px] tracking-widest transition cursor-not-allowed animate-pulse"
+                    >
+                      Waiting for host to start race...
+                    </button>
+                  )}
+                </div>
               </div>
             </motion.div>
           </div>

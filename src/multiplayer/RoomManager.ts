@@ -213,6 +213,14 @@ export class RoomManager {
     RoomManager.currentRoomCode = null;
   }
 
+  static async deleteRoom(code: string): Promise<void> {
+    const cleanCode = code.trim().toUpperCase();
+    await RoomService.deleteRoom(cleanCode);
+    safeRemoveItem("local", "activeRoomCode");
+    safeRemoveItem("session", "last_room_code");
+    RoomManager.currentRoomCode = null;
+  }
+
   // ── Reconnection Handler ───────────────────────────────────
 
   /**

@@ -9,6 +9,44 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Pre-download map GLB on startup for instantaneous, zero-CORS local loading
+  const downloadMapOnStartup = async () => {
+    const assetsDir = path.join(process.cwd(), "public", "assets");
+    if (!fs.existsSync(assetsDir)) {
+      try {
+        fs.mkdirSync(assetsDir, { recursive: true });
+      } catch (err) {}
+    }
+    const mapPath = path.join(assetsDir, "racing2.glb");
+    const targetSize = 47139152;
+
+    if (fs.existsSync(mapPath)) {
+      const stats = fs.statSync(mapPath);
+      if (stats.size === targetSize) {
+        console.log(`[Startup Map Loader] Map GLB already downloaded and verified (${stats.size} bytes).`);
+        return;
+      }
+      console.log(`[Startup Map Loader] Local map size mismatch (${stats.size} vs expected ${targetSize}). Re-downloading...`);
+    } else {
+      console.log(`[Startup Map Loader] Local map GLB not found. Pre-downloading in background...`);
+    }
+
+    try {
+      const url = "https://pub-a248afed72844944a7565dc9cbaacbb0.r2.dev/map/Untitled12.glb";
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch map GLB: ${response.statusText}`);
+      }
+      const buffer = await response.arrayBuffer();
+      fs.writeFileSync(mapPath, Buffer.from(buffer));
+      console.log(`[Startup Map Loader] Successfully downloaded and saved map GLB to local server at ${mapPath} (${buffer.byteLength} bytes).`);
+    } catch (err: any) {
+      console.error(`[Startup Map Loader] Failed to pre-download map GLB:`, err.message);
+    }
+  };
+
+  downloadMapOnStartup();
+
   app.use(express.json());
 
   // Client-side error telemetry logging endpoint
@@ -66,7 +104,12 @@ async function startServer() {
         res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
         return res.sendFile(p, (err) => {
           if (err) {
-            console.error("[Static Server] Error serving racing2.glb:", err);
+            const error = err as any;
+            if (error.code === "EPIPE" || error.code === "ECONNRESET" || error.message?.includes("EPIPE") || error.message?.includes("ECONNRESET")) {
+              console.log("[Static Server] Client disconnected while downloading racing2.glb (EPIPE/ECONNRESET). This is normal when a user closes or refreshes their browser.");
+            } else {
+              console.error("[Static Server] Error serving racing2.glb:", err);
+            }
           }
         });
       }

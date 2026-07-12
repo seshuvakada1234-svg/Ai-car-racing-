@@ -95,7 +95,6 @@ interface RacingCanvasUnitProps {
   handleTickUpdate: (updatedCars: CarState[]) => void;
   handleRestartRace: () => void;
   handleHomeMenu: () => void;
-  handleNextRace: () => void;
   mp: any;
 }
 
@@ -121,7 +120,6 @@ const RacingCanvasUnit: React.FC<RacingCanvasUnitProps> = ({
   handleTickUpdate,
   handleRestartRace,
   handleHomeMenu,
-  handleNextRace,
   mp,
 }) => {
   const navigate = useNavigate();
@@ -246,7 +244,6 @@ const RacingCanvasUnit: React.FC<RacingCanvasUnitProps> = ({
             }
             handleHomeMenu();
           }}
-          onNextRace={mp.room ? undefined : handleNextRace}
         />
       )}
 
@@ -713,21 +710,6 @@ function AppBody() {
     }
   };
 
-  // Automatically load the alternate track (Map 1 <-> Map 2) and boot it up
-  const handleNextRace = () => {
-    if (settings) {
-      const nextMap = settings.selectedMap === "map2" ? "map1" : "map2";
-      const updatedSettings = {
-        ...settings,
-        selectedMap: nextMap as "map1" | "map2",
-      };
-      handleStartGame(updatedSettings);
-    } else {
-      setPhase("menu");
-      navigate("/garage");
-    }
-  };
-
   // Back to Main configuration screen
   const handleHomeMenu = () => {
     setPhase("menu");
@@ -747,6 +729,18 @@ function AppBody() {
         });
       } catch (e) {
         console.error("Error submitting score record:", e);
+      }
+    }
+
+    // Auto-delete the room if in multiplayer and this client is the host
+    if (mp.room && mp.room.hostId === mp.playerId) {
+      try {
+        // Wait 3 seconds so regular players can receive final state updates before deletion
+        setTimeout(async () => {
+          mp.deleteRoom();
+        }, 3000);
+      } catch (e) {
+        console.error("Error auto-deleting finished room:", e);
       }
     }
   };
@@ -1077,7 +1071,6 @@ function AppBody() {
                 handleTickUpdate={handleTickUpdate}
                 handleRestartRace={handleRestartRace}
                 handleHomeMenu={handleHomeMenu}
-                handleNextRace={handleNextRace}
                 mp={mp}
               />
             </ProtectedRoute>

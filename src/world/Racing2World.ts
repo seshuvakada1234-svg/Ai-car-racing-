@@ -56,6 +56,20 @@ const IGNORE_KEYWORDS = [
   "lamp",
 ];
 
+const ROAD_EXCLUDE_KEYWORDS = [
+  "barrier", "guard", "rail", "wall", "fence",
+  "building", "house", "garage", "pit", "gantry",
+  "curb", "kerb", "sidewalk", "pavement", "gutter",
+  "sign", "light", "lamp", "post", "pole", "wire", "pipe",
+  "prop", "decor",
+  "grass", "tree", "bush", "flower", "plant", "foliage",
+  "sky", "skybox", "water", "river", "lake",
+  "bridge_support", "pillar", "column", "support", "arch",
+  "terrain", "cliff", "rock", "mountain", "dirt", "sand", "mud",
+  "spectator", "grandstand", "stand", "bleacher", "tribune", "awning",
+  "tire_wall", "tyre_wall", "collision", "collider"
+];
+
 const REQUIRED_CP_COUNT = 55;
 const GRID_COUNT = 6;
 
@@ -156,7 +170,6 @@ export class Racing2World {
         return;
       }
       if (!Racing2World.loadingPromise) {
-        const url = Racing2World.GLB_URL;
         Racing2World.loadingPromise = (async () => {
           const loader = new GLTFLoader();
           try {
@@ -166,16 +179,54 @@ export class Racing2World {
           } catch (e) {
             console.warn("DRACO init failed", e);
           }
-          const gltf = await new Promise<any>((resolve, reject) => {
-            loader.load(
-              url,
-              (g) => resolve(g),
-              (xhr) => {
-                if (xhr?.total) this.showOverlay(`Loading map… ${Math.round((xhr.loaded / xhr.total) * 100)}%`, false);
-              },
-              reject,
-            );
-          });
+
+          // Build candidates to load from
+          const assetUrl = racing2Asset?.url ? resolveAssetUrl(racing2Asset.url) : "";
+          const urlsToTry: string[] = [
+            "/assets/racing2.glb"
+          ];
+
+          if (assetUrl) {
+            urlsToTry.push(`/api/proxy?url=${encodeURIComponent(assetUrl)}`);
+            urlsToTry.push(assetUrl);
+          }
+          urlsToTry.push(`/api/proxy?url=${encodeURIComponent(Racing2World.GLB_URL)}`);
+          urlsToTry.push(Racing2World.GLB_URL);
+
+          let gltf: any = null;
+          let lastError: any = null;
+
+          for (const url of urlsToTry) {
+            try {
+              console.log(`[Racing2World] Attempting to load map GLB from: ${url}`);
+              this.showOverlay(`Loading map from source…`, false);
+              gltf = await new Promise<any>((resolve, reject) => {
+                loader.load(
+                  url,
+                  (g) => resolve(g),
+                  (xhr) => {
+                    if (xhr?.total) {
+                      this.showOverlay(`Loading map… ${Math.round((xhr.loaded / xhr.total) * 100)}%`, false);
+                    } else if (xhr?.loaded) {
+                      const mb = (xhr.loaded / (1024 * 1024)).toFixed(1);
+                      this.showOverlay(`Loading map… ${mb} MB downloaded`, false);
+                    }
+                  },
+                  reject,
+                );
+              });
+              console.log(`[Racing2World] Successfully loaded map GLB from: ${url}`);
+              break;
+            } catch (err) {
+              console.warn(`[Racing2World] Failed to load GLB from ${url}:`, err);
+              lastError = err;
+            }
+          }
+
+          if (!gltf) {
+            throw lastError || new Error("Failed to load map GLB from all sources");
+          }
+
           Racing2World.cachedGltf = gltf;
           return gltf;
         })();
@@ -234,7 +285,7 @@ export class Racing2World {
 
         const text = `${objectNameChain(obj)} ${materialName(obj)}`;
         const isCollider = includesAny(text, COLLIDER_KEYWORDS) && !includesAny(text, IGNORE_KEYWORDS);
-        const isRoad = includesAny(text, ROAD_KEYWORDS) && !includesAny(text, IGNORE_KEYWORDS);
+        const isRoad = includesAny(text, ROAD_KEYWORDS) && !includesAny(text, IGNORE_KEYWORDS) && !includesAny(text, ROAD_EXCLUDE_KEYWORDS);
         obj.userData.collidable = isCollider;
         obj.userData.staticCollider = isCollider;
         if (isCollider) this.colliders.push(obj);

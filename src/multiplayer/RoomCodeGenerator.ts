@@ -44,10 +44,7 @@ export class RoomCodeGenerator {
 
   // Backwards compatibility methods
   public static generate(): string {
-    const prefixes = ["DRAGON", "NEON", "SPEED", "VIPER", "PHANTOM", "APEX", "CARBON", "NITRO", "BLAZE", "PULSE"];
-    const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
-    const num = Math.floor(100 + Math.random() * 900);
-    return `${prefix}${num}`;
+    return this.generateCode();
   }
 
   public static release(code: string): void {

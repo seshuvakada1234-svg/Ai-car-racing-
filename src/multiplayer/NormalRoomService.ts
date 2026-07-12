@@ -107,6 +107,13 @@ export class NormalRoomService {
   }
 
   /**
+   * Delete room and its players subcollection atomically.
+   */
+  static async deleteRoom(code: string): Promise<void> {
+    await RoomService.deleteRoom(code);
+  }
+
+  /**
    * Listen to any changes in the main room doc.
    */
   static listenToRoom(code: string, callback: (room: NormalRoom | null) => void) {

@@ -35,6 +35,7 @@ export interface RoomState {
   code?: string; // alias for compatibility
   id?: string; // alias for compatibility
   hostId: string;
+  hostName?: string;
   ownerUid?: string; // alias for compatibility
   ownerName?: string; // alias for compatibility
   players: RoomPlayer[];

@@ -25,6 +25,7 @@ export interface UseRoomReturn {
   ) => Promise<string>;
   joinRoom: (code: string, nickname: string, carId: string, carColor?: string) => Promise<void>;
   leaveRoom: () => Promise<void>;
+  deleteRoom: () => Promise<void>;
   updateSettings: (settings: Partial<Pick<RoomData, "map" | "difficulty" | "laps" | "weather">>) => Promise<void>;
   setReady: () => Promise<void>;
 }
@@ -158,6 +159,13 @@ export function useRoom(): UseRoomReturn {
     }
   }, []);
 
+  const deleteRoom = useCallback(async (): Promise<void> => {
+    if (!globalRoomCode) return;
+    const code = globalRoomCode;
+    unsubscribeFromRoom();
+    await RoomManager.deleteRoom(code);
+  }, []);
+
   const updateSettings = useCallback(
     async (settings: Partial<Pick<RoomData, "map" | "difficulty" | "laps" | "weather">>): Promise<void> => {
       if (!globalRoomCode) return;
@@ -185,6 +193,7 @@ export function useRoom(): UseRoomReturn {
     createRoom,
     joinRoom,
     leaveRoom,
+    deleteRoom,
     updateSettings,
     setReady,
   };

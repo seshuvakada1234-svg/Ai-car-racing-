@@ -15,6 +15,9 @@ import {
   onSnapshot,
   serverTimestamp,
   Unsubscribe,
+  runTransaction,
+  query,
+  where,
 } from "firebase/firestore";
 import { RoomState, RoomPlayer, RoomStatus } from "./RoomState";
 import { RoomCodeGenerator } from "./RoomCodeGenerator";
@@ -83,57 +86,123 @@ export class RoomService {
       // 1. Enforce active database maintenance for stale items passively
       await this.deleteExpiredRooms();
 
-      // 2. Generate and verify code
-      const rawCode = await RoomCodeGenerator.generateUnique();
-      const roomCode = rawCode.trim().toUpperCase();
+      // 2. Search for an existing waiting room owned by this host to reuse
+      const roomsRef = collection(db, "rooms");
+      const q = query(roomsRef, where("hostId", "==", hostId), where("status", "==", "waiting"));
+      const querySnapshot = await getDocs(q);
 
-      console.log("Creating room:", roomCode);
+      let roomCode = "";
 
-      const hostPlayer: RoomPlayer = {
-        uid: hostId,
-        id: hostId, // compatibility
-        playerName: hostName,
-        nickname: hostName, // compatibility
-        photoURL: hostPhotoURL || "",
-        joinedAt: Date.now(),
-        ready: true,
-        isReady: true, // compatibility
-        carId: selectedCar,
-        isHost: true,
-        isAI: false,
-      };
+      if (!querySnapshot.empty) {
+        // Reuse the first found room code
+        roomCode = querySnapshot.docs[0].id;
+        console.log("Reusing existing waiting room:", roomCode);
 
-      const expiresAtDate = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes from now
+        const hostPlayer: RoomPlayer = {
+          uid: hostId,
+          id: hostId, // compatibility
+          playerName: hostName,
+          nickname: hostName, // compatibility
+          photoURL: hostPhotoURL || "",
+          joinedAt: Date.now(),
+          ready: true,
+          isReady: true, // compatibility
+          carId: selectedCar,
+          isHost: true,
+          isAI: false,
+        };
 
-      const roomData: RoomState = {
-        roomCode,
-        code: roomCode, // compatibility
-        id: roomCode, // compatibility
-        hostId,
-        ownerUid: hostId, // compatibility
-        ownerName: hostName, // compatibility
-        players: [hostPlayer],
-        maxPlayers,
-        status: "waiting",
-        phase: "waiting", // compatibility
-        countdown: 30,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        expiresAt: expiresAtDate,
-        mapType,
-        mapId: mapType, // compatibility
-        selectedCars: { [hostId]: selectedCar },
-        selectedCar, // compatibility
-        gameState: "lobby",
-        currentPlayers: 1,
-      };
+        const expiresAtDate = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes from now
 
-      const roomRef = doc(db, "rooms", roomCode);
-      await setDoc(roomRef, roomData);
+        // Clear any other players from the players subcollection to avoid stale joins
+        const playersCollectionRef = collection(db, "rooms", roomCode, "players");
+        const playersSnap = await getDocs(playersCollectionRef);
+        for (const plDoc of playersSnap.docs) {
+          if (plDoc.id !== hostId) {
+            await deleteDoc(doc(db, "rooms", roomCode, "players", plDoc.id));
+          }
+        }
 
-      // Support subcollection structure used by legacy real-time loops
-      const playerRef = doc(db, "rooms", roomCode, "players", hostId);
-      await setDoc(playerRef, hostPlayer);
+        // Set/overwrite host player in subcollection
+        const hostPlayerRef = doc(db, "rooms", roomCode, "players", hostId);
+        await setDoc(hostPlayerRef, hostPlayer);
+
+        // Update the main room document
+        const roomRef = doc(db, "rooms", roomCode);
+        await updateDoc(roomRef, {
+          hostId,
+          hostName,
+          ownerUid: hostId,
+          ownerName: hostName,
+          players: [hostPlayer],
+          maxPlayers,
+          status: "waiting",
+          phase: "waiting",
+          countdown: 30,
+          updatedAt: serverTimestamp(),
+          expiresAt: expiresAtDate,
+          mapType,
+          mapId: mapType,
+          selectedCars: { [hostId]: selectedCar },
+          selectedCar,
+          gameState: "lobby",
+          currentPlayers: 1,
+        });
+
+      } else {
+        // Create a new room as usual
+        const rawCode = await RoomCodeGenerator.generateUnique();
+        roomCode = rawCode.trim().toUpperCase();
+
+        console.log("Creating new room:", roomCode);
+
+        const hostPlayer: RoomPlayer = {
+          uid: hostId,
+          id: hostId, // compatibility
+          playerName: hostName,
+          nickname: hostName, // compatibility
+          photoURL: hostPhotoURL || "",
+          joinedAt: Date.now(),
+          ready: true,
+          isReady: true, // compatibility
+          carId: selectedCar,
+          isHost: true,
+          isAI: false,
+        };
+
+        const expiresAtDate = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes from now
+
+        const roomData: RoomState = {
+          roomCode,
+          code: roomCode, // compatibility
+          id: roomCode, // compatibility
+          hostId,
+          hostName,
+          ownerUid: hostId, // compatibility
+          ownerName: hostName, // compatibility
+          players: [hostPlayer],
+          maxPlayers,
+          status: "waiting",
+          phase: "waiting", // compatibility
+          countdown: 30,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          expiresAt: expiresAtDate,
+          mapType,
+          mapId: mapType, // compatibility
+          selectedCars: { [hostId]: selectedCar },
+          selectedCar, // compatibility
+          gameState: "lobby",
+          currentPlayers: 1,
+        };
+
+        const roomRef = doc(db, "rooms", roomCode);
+        await setDoc(roomRef, roomData);
+
+        // Support subcollection structure used by legacy real-time loops
+        const playerRef = doc(db, "rooms", roomCode, "players", hostId);
+        await setDoc(playerRef, hostPlayer);
+      }
 
       return roomCode;
     } catch (e) {
@@ -160,63 +229,72 @@ export class RoomService {
     const roomRef = doc(db, "rooms", cleanCode);
 
     try {
-      const snap = await getDoc(roomRef);
-      const roomExists = snap.exists();
-      console.log("Room exists:", roomExists);
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(roomRef);
+        
+        // 1. Check if the room exists
+        if (!snap.exists()) {
+          throw new Error("Room Closed");
+        }
 
-      if (!roomExists) {
-        throw new Error("Room Closed");
-      }
+        const room = snap.data() as RoomState;
 
-      const room = snap.data() as RoomState;
-      console.log("Players:", room.players ? room.players.length : 0);
-      console.log("Room status:", room.status || "waiting");
+        // 2. Check if the room is waiting
+        if (room.status !== "waiting" && room.phase !== "waiting") {
+          throw new Error("Race already started");
+        }
 
-      // Enforce Room validation checks
-      RoomValidator.validateRoomToJoin(room);
+        const players = room.players || [];
+        const maxPlayers = room.maxPlayers || 3;
+        const existingIdx = players.findIndex((p) => p.uid === playerId);
 
-      const existingIdx = room.players.findIndex((p) => p.uid === playerId);
-      let updatedPlayers = [...room.players];
+        // 3. Check if the room is not full (skip if player is already registered and rejoining)
+        if (existingIdx < 0 && players.length >= maxPlayers) {
+          throw new Error("Room Full");
+        }
 
-      const newPlayer: RoomPlayer = {
-        uid: playerId,
-        id: playerId, // compatibility
-        playerName,
-        nickname: playerName, // compatibility
-        photoURL: playerPhotoURL || "",
-        joinedAt: Date.now(),
-        ready: true,
-        isReady: true, // compatibility
-        carId: selectedCar,
-        isHost: false,
-        isAI: false,
-      };
+        // Validate other expiration, archiving conditions
+        RoomValidator.validateRoomToJoin(room);
 
-      if (existingIdx >= 0) {
-        updatedPlayers[existingIdx] = newPlayer;
-      } else {
-        updatedPlayers.push(newPlayer);
-      }
+        let updatedPlayers = [...players];
 
-      const updatedSelectedCars = {
-        ...room.selectedCars,
-        [playerId]: selectedCar,
-      };
+        const newPlayer: RoomPlayer = {
+          uid: playerId,
+          id: playerId, // compatibility
+          playerName,
+          nickname: playerName, // compatibility
+          photoURL: playerPhotoURL || "",
+          joinedAt: Date.now(),
+          ready: true,
+          isReady: true, // compatibility
+          carId: selectedCar,
+          isHost: room.hostId === playerId,
+          isAI: false,
+        };
 
-      await setDoc(
-        roomRef,
-        {
+        if (existingIdx >= 0) {
+          updatedPlayers[existingIdx] = newPlayer;
+        } else {
+          updatedPlayers.push(newPlayer);
+        }
+
+        const updatedSelectedCars = {
+          ...room.selectedCars,
+          [playerId]: selectedCar,
+        };
+
+        // Update room doc
+        transaction.update(roomRef, {
           players: updatedPlayers,
           selectedCars: updatedSelectedCars,
           currentPlayers: updatedPlayers.length,
           updatedAt: serverTimestamp(),
-        },
-        { merge: true },
-      );
+        });
 
-      // Build fallback subcollection tracking references
-      const playerRef = doc(db, "rooms", cleanCode, "players", playerId);
-      await setDoc(playerRef, newPlayer);
+        // Set player subcollection
+        const playerRef = doc(db, "rooms", cleanCode, "players", playerId);
+        transaction.set(playerRef, newPlayer);
+      });
     } catch (e: any) {
       const specErrors = [
         "Room Closed",
@@ -238,7 +316,7 @@ export class RoomService {
   }
 
   /**
-   * Leaves a room. If user was the Host, disband/cancel the room completely.
+   * Leaves a room. If user was the Host and leaves before the race starts, delete the room automatically.
    */
   public static async leaveRoom(roomCode: string, uid: string): Promise<void> {
     const cleanCode = roomCode.toUpperCase().trim();
@@ -246,38 +324,99 @@ export class RoomService {
 
     const roomRef = doc(db, "rooms", cleanCode);
     try {
-      const snap = await getDoc(roomRef);
-      if (!snap.exists()) return;
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(roomRef);
+        if (!snap.exists()) return;
 
-      const room = snap.data() as RoomState;
+        const room = snap.data() as RoomState;
+        const players = room.players || [];
+        
+        const isPlayerIn = players.some((p) => p.uid === uid);
+        if (!isPlayerIn) return;
 
-      if (room.hostId === uid || room.ownerUid === uid) {
-        // Disband room and clean all subdocs
-        const subSnap = await getDocs(collection(db, "rooms", cleanCode, "players"));
-        for (const plDoc of subSnap.docs) {
-          await deleteDoc(doc(db, "rooms", cleanCode, "players", plDoc.id));
-        }
-        await deleteDoc(roomRef);
-      } else {
-        const updatedPlayers = room.players.filter((p) => p.uid !== uid);
+        const updatedPlayers = players.filter((p) => p.uid !== uid);
         const updatedSelectedCars = { ...room.selectedCars };
         delete updatedSelectedCars[uid];
 
-        await setDoc(
-          roomRef,
-          {
+        const beforeStart = room.status === "waiting" || room.status === "countdown" || room.status === "starting" || room.phase === "waiting";
+
+        if (room.hostId === uid || room.ownerUid === uid) {
+          if (beforeStart) {
+            // Delete the room automatically as required by Requirement 6
+            transaction.delete(roomRef);
+            for (const p of players) {
+              const pRef = doc(db, "rooms", cleanCode, "players", p.uid);
+              transaction.delete(pRef);
+            }
+          } else {
+            // If the race already started, transfer host if there are remaining players
+            if (updatedPlayers.length > 0) {
+              const newHost = updatedPlayers[0];
+              newHost.isHost = true;
+              newHost.ready = true;
+              if (newHost.isReady !== undefined) newHost.isReady = true;
+
+              const finalPlayers = updatedPlayers.map((p) => p.uid === newHost.uid ? newHost : p);
+
+              transaction.update(roomRef, {
+                hostId: newHost.uid,
+                ownerUid: newHost.uid, // compatibility
+                hostName: newHost.playerName,
+                ownerName: newHost.playerName, // compatibility
+                players: finalPlayers,
+                selectedCars: updatedSelectedCars,
+                currentPlayers: finalPlayers.length,
+                updatedAt: serverTimestamp(),
+              });
+
+              const newHostRef = doc(db, "rooms", cleanCode, "players", newHost.uid);
+              transaction.update(newHostRef, { isHost: true, ready: true, isReady: true });
+            } else {
+              transaction.delete(roomRef);
+            }
+          }
+        } else {
+          // Normal player leaving
+          transaction.update(roomRef, {
             players: updatedPlayers,
             selectedCars: updatedSelectedCars,
             currentPlayers: updatedPlayers.length,
             updatedAt: serverTimestamp(),
-          },
-          { merge: true },
-        );
+          });
+        }
 
-        await deleteDoc(doc(db, "rooms", cleanCode, "players", uid));
-      }
+        // Always delete the leaving player's doc in subcollection
+        const leavingPlayerRef = doc(db, "rooms", cleanCode, "players", uid);
+        transaction.delete(leavingPlayerRef);
+      });
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `rooms/${cleanCode}`);
+    }
+  }
+
+  /**
+   * Delete room and its players subcollection atomically.
+   */
+  public static async deleteRoom(roomCode: string): Promise<void> {
+    const cleanCode = roomCode.toUpperCase().trim();
+    if (!cleanCode) return;
+    const roomRef = doc(db, "rooms", cleanCode);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(roomRef);
+        if (!snap.exists()) return;
+
+        const room = snap.data() as RoomState;
+        const players = room.players || [];
+
+        transaction.delete(roomRef);
+        for (const p of players) {
+          const pRef = doc(db, "rooms", cleanCode, "players", p.uid);
+          transaction.delete(pRef);
+        }
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `rooms/${cleanCode}`);
     }
   }
 
@@ -288,13 +427,20 @@ export class RoomService {
     const cleanCode = roomCode.toUpperCase().trim();
     const roomRef = doc(db, "rooms", cleanCode);
     try {
-      await updateDoc(roomRef, {
-        status,
-        phase: status, // compatibility
-        updatedAt: serverTimestamp(),
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(roomRef);
+        if (!snap.exists()) {
+          throw new Error("Room not found");
+        }
+        transaction.update(roomRef, {
+          status,
+          phase: status, // compatibility
+          updatedAt: serverTimestamp(),
+        });
       });
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `rooms/${cleanCode}`);
+      throw e;
     }
   }
 
@@ -384,14 +530,23 @@ export class RoomService {
    */
   public static async deleteExpiredRooms(): Promise<void> {
     try {
+      if (!auth.currentUser) return;
       const roomsRef = collection(db, "rooms");
-      const snap = await getDocs(roomsRef);
+      // Query only rooms owned by this user to avoid listing others and triggering permission-denied
+      const q = query(roomsRef, where("hostId", "==", auth.currentUser.uid));
+      const snap = await getDocs(q);
       const now = Date.now();
-      const cutoff = 30 * 60 * 1000;
+      const cutoff = 30 * 60 * 1000; // 30 minutes
 
       for (const d of snap.docs) {
         const room = d.data() as RoomState;
-        let lastActiveTime = now;
+        
+        // Skip deleting rooms that are starting or racing (active game sessions)
+        if (room.status === "starting" || room.status === "racing") {
+          continue;
+        }
+
+        let lastActiveTime = 0;
         const timeSource = room.updatedAt || room.createdAt;
 
         if (timeSource) {
@@ -406,8 +561,18 @@ export class RoomService {
           }
         }
 
+        // If lastActiveTime couldn't be parsed, fallback to expiresAt or now
+        if (lastActiveTime === 0) {
+          if (room.expiresAt) {
+            const expDate = room.expiresAt instanceof Date ? room.expiresAt : (typeof room.expiresAt.toDate === "function" ? room.expiresAt.toDate() : new Date(room.expiresAt));
+            lastActiveTime = expDate.getTime() - cutoff;
+          } else {
+            lastActiveTime = now;
+          }
+        }
+
         if (now - lastActiveTime > cutoff) {
-          console.log(`Passive expired check: Deleting inactive room doc ${d.id}`);
+          console.log(`Passive expired check: Deleting expired room doc ${d.id}`);
           const playersRef = collection(db, "rooms", d.id, "players");
           const plSnap = await getDocs(playersRef);
           for (const plDoc of plSnap.docs) {

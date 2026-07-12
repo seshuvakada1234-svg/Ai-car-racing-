@@ -115,24 +115,8 @@ service cloud.firestore {
 
     // ROOMS COLLECTION (Multiplayer Matched Staging Lobbies)
     match /rooms/{roomId} {
-      // Racers can read or join any custom rooms directly via the lobby search/join overlay
-      allow get: if isSignedIn();
-
-      // Room directory listing is locked to Admins and Broadcasters to display active live streams
-      allow list: if isSignedIn() && (isAdmin() || isBroadcaster());
-
-      // Creators/Hosts can open/provision a new room
-      allow create: if isSignedIn() && 
-                    request.resource.data.hostId == request.auth.uid;
-
-      // Allow room states to be synchronized (e.g. lobby members, vehicle speed coordinates)
-      allow update: if isSignedIn() && (
-        request.auth.uid == resource.data.hostId || 
-        isAdmin() || 
-        isBroadcaster() ||
-        // Let peers input their custom join properties safely matching the host guidelines
-        (request.resource.data.hostId == resource.data.hostId)
-      );
+      // Any authenticated racer can read, list, create, or update room matchmaking staging states
+      allow get, list, create, update: if isSignedIn();
 
       // Closing/purging a room is reserved for the Host or Admin
       allow delete: if isSignedIn() && (

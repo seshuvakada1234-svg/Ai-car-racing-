@@ -28,6 +28,7 @@ export interface UseMultiplayerReturn {
   ) => Promise<string>;
   joinRoom: (code: string, nickname: string, carId: string, carColor: string) => Promise<boolean>;
   leaveRoom: () => void;
+  deleteRoom: () => void;
   toggleReady: (ready?: boolean) => void;
   startRaceNow: () => void;
   setError: (err: string | null) => void;
@@ -49,6 +50,7 @@ export function useMultiplayer(roomOverride?: RoomData | null): UseMultiplayerRe
     createRoom: createRoomBase,
     joinRoom: joinRoomBase,
     leaveRoom,
+    deleteRoom,
     setReady,
   } = useRoom();
 
@@ -151,6 +153,7 @@ export function useMultiplayer(roomOverride?: RoomData | null): UseMultiplayerRe
     createRoom,
     joinRoom,
     leaveRoom,
+    deleteRoom,
     toggleReady,
     startRaceNow,
     setError,

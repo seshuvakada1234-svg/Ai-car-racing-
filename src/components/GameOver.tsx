@@ -5,7 +5,7 @@
 
 import React from "react";
 import { CarState } from "../types";
-import { Award, RotateCcw, Home, Clock, Sparkles } from "lucide-react";
+import { RotateCcw, Home, Clock, Sparkles } from "lucide-react";
 
 interface GameOverProps {
   player: CarState;
@@ -13,7 +13,6 @@ interface GameOverProps {
   elapsedTime: number;
   onRestart: () => void;
   onHome: () => void;
-  onNextRace?: () => void;
 }
 
 export const GameOver: React.FC<GameOverProps> = ({
@@ -22,7 +21,6 @@ export const GameOver: React.FC<GameOverProps> = ({
   elapsedTime,
   onRestart,
   onHome,
-  onNextRace,
 }) => {
   // Rank by: (1) finished cars first, ordered by finishTime; then (2) unfinished
   // cars by distance covered. racePosition is used only as a final tiebreaker.
@@ -177,18 +175,8 @@ export const GameOver: React.FC<GameOverProps> = ({
         </div>
 
         {/* Buttons Action items */}
-        <div className="flex flex-col space-y-2.5 pt-2">
-          {onNextRace && (
-            <button
-              onClick={onNextRace}
-              className="w-full bg-gradient-to-r from-blue-500 via-cyan-500 to-blue-600 hover:brightness-105 text-white font-extrabold uppercase text-xs tracking-widest py-4 rounded-xl border border-cyan-400/25 shadow-lg shadow-cyan-500/10 transition duration-150 flex items-center justify-center space-x-2 cursor-pointer"
-            >
-              <Award className="w-4 h-4 text-white fill-current animate-bounce" />
-              <span>Continue to Next Track</span>
-            </button>
-          )}
-
-          <div className="flex space-x-3">
+        <div className="pt-4">
+          <div className="flex space-x-3 w-full">
             <button
               onClick={onHome}
               className="flex-1 bg-slate-950 hover:bg-slate-850 text-slate-300 font-bold uppercase text-xs tracking-wider py-3.5 rounded-xl border border-slate-800 transition duration-150 flex items-center justify-center space-x-2 cursor-pointer"

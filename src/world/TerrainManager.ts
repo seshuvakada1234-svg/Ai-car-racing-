@@ -395,10 +395,15 @@ export class TerrainManager {
         }
 
         const geom = m.geometry.clone();
-        // Keep only 'position' attribute to prevent mergeGeometries failing with differing attributes
+        if (!geom.attributes.normal) {
+          try {
+            geom.computeVertexNormals();
+          } catch (e) {}
+        }
+        // Keep only 'position' and 'normal' attributes to prevent mergeGeometries failing with differing attributes
         const attrKeys = Object.keys(geom.attributes);
         for (const key of attrKeys) {
-          if (key !== "position") {
+          if (key !== "position" && key !== "normal") {
             geom.deleteAttribute(key);
           }
         }
@@ -490,13 +495,22 @@ export class TerrainManager {
         let best = intersections[0];
         let bestScore = Infinity;
         const queryY = Number.isFinite(pos.y) ? pos.y : intersections[0].point.y;
+        
+        // On Racing2 (external road), the query position is at chassis level,
+        // so the actual road is expected around queryY - 0.38 (wheel radius).
+        // Any hit above queryY - 0.1 is likely a wall, curb, or overhead bridge.
+        const expectedRoadY = this.externalRoadOnly ? queryY - 0.38 : queryY;
+        const aboveThreshold = this.externalRoadOnly ? queryY - 0.1 : queryY + 1.5;
+
         for (const hit of intersections) {
           if (!hit?.point) continue;
           const faceNormalY = Math.abs(hit.face?.normal?.y ?? 1);
           if (faceNormalY < 0.35) continue;
-          const vertical = Math.abs(hit.point.y - queryY);
-          const abovePenalty = hit.point.y > queryY + 4.0 ? 40.0 : 0.0;
+          
+          const vertical = Math.abs(hit.point.y - expectedRoadY);
+          const abovePenalty = hit.point.y > aboveThreshold ? 100.0 : 0.0;
           const score = vertical + abovePenalty;
+          
           if (score < bestScore) {
             bestScore = score;
             best = hit;
