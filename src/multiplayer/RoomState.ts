@@ -19,6 +19,12 @@ export interface RoomPlayer {
   isHost: boolean;
   isAI: boolean;
 
+  // Map download synchronizations
+  mapReady?: boolean;
+  downloadProgress?: number;
+  downloadedMB?: number;
+  totalMB?: number;
+
   // Multi-user racing synchronizations
   position?: { x: number; y: number; z: number };
   velocity?: { x: number; y: number; z: number };

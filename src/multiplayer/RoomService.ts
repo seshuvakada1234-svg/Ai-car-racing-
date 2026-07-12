@@ -70,6 +70,62 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
+export function getSelectedCarObj(carId: string) {
+  const id = carId || "ferrari";
+  if (id === "bugatti") {
+    return {
+      id: "bugatti",
+      name: "Bugatti Chiron",
+      manufacturer: "Bugatti",
+      class: "HYPER CLASS",
+      topSpeed: 420,
+      acceleration: "2.4s",
+      handling: 80,
+      drivetrain: "AWD",
+      color: "#00ccff",
+      thumbnail: "/assets/images/bugatti_garage_1781251768295.jpg"
+    };
+  } else if (id === "porsche") {
+    return {
+      id: "porsche",
+      name: "Porsche 911 GT3",
+      manufacturer: "Porsche",
+      class: "A CLASS",
+      topSpeed: 320,
+      acceleration: "3.2s",
+      handling: 98,
+      drivetrain: "RWD",
+      color: "#00ff3c",
+      thumbnail: "/assets/images/bugatti_garage_1781251768295.jpg"
+    };
+  } else {
+    return {
+      id: "ferrari",
+      name: "Ferrari Purosangue",
+      manufacturer: "Ferrari",
+      class: "A CLASS",
+      topSpeed: 310,
+      acceleration: "3.3s",
+      handling: 90,
+      drivetrain: "AWD",
+      color: "#ff003c",
+      thumbnail: "/assets/images/bugatti_garage_1781251768295.jpg"
+    };
+  }
+}
+
+export function getSelectedMapObj(mapId: string, lapsValue = 3) {
+  return {
+    id: "race2map",
+    name: "Race 2",
+    preview: "/maps/race2/preview.jpg",
+    laps: 3,
+    difficulty: "Medium",
+    trackLength: "...",
+    weather: "Clear"
+  };
+}
+
 export class RoomService {
   /**
    * Generates a completely unique, verified room code and stores the initial setup inside Firestore.
@@ -79,130 +135,79 @@ export class RoomService {
     hostName: string,
     hostPhotoURL: string,
     selectedCar: string,
-    mapType = "map1",
+    mapType = "race2map",
     maxPlayers = 3,
   ): Promise<string> {
     try {
       // 1. Enforce active database maintenance for stale items passively
       await this.deleteExpiredRooms();
 
-      // 2. Search for an existing waiting room owned by this host to reuse
-      const roomsRef = collection(db, "rooms");
-      const q = query(roomsRef, where("hostId", "==", hostId), where("status", "==", "waiting"));
-      const querySnapshot = await getDocs(q);
+      // 2. Create a new room with a brand-new unique room code
+      const rawCode = await RoomCodeGenerator.generateUnique();
+      const roomCode = rawCode.trim().toUpperCase();
 
-      let roomCode = "";
+      console.log("Creating new unique room:", roomCode);
 
-      if (!querySnapshot.empty) {
-        // Reuse the first found room code
-        roomCode = querySnapshot.docs[0].id;
-        console.log("Reusing existing waiting room:", roomCode);
+      const hostPlayer: RoomPlayer = {
+        uid: hostId,
+        id: hostId, // compatibility
+        playerName: hostName,
+        nickname: hostName, // compatibility
+        photoURL: hostPhotoURL || "",
+        joinedAt: Date.now(),
+        ready: true,
+        isReady: true, // compatibility
+        carId: selectedCar,
+        isHost: true,
+        isAI: false,
+      };
 
-        const hostPlayer: RoomPlayer = {
-          uid: hostId,
-          id: hostId, // compatibility
-          playerName: hostName,
-          nickname: hostName, // compatibility
-          photoURL: hostPhotoURL || "",
-          joinedAt: Date.now(),
-          ready: true,
-          isReady: true, // compatibility
-          carId: selectedCar,
-          isHost: true,
-          isAI: false,
-        };
+      const expiresAtDate = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes from now
 
-        const expiresAtDate = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes from now
+      const carObj = getSelectedCarObj(selectedCar);
+      const mapObj = {
+        id: "race2map",
+        name: "Race 2",
+        preview: "/maps/race2/preview.jpg",
+        laps: 3,
+        difficulty: "Medium",
+        trackLength: "...",
+        weather: "Clear"
+      };
 
-        // Clear any other players from the players subcollection to avoid stale joins
-        const playersCollectionRef = collection(db, "rooms", roomCode, "players");
-        const playersSnap = await getDocs(playersCollectionRef);
-        for (const plDoc of playersSnap.docs) {
-          if (plDoc.id !== hostId) {
-            await deleteDoc(doc(db, "rooms", roomCode, "players", plDoc.id));
-          }
-        }
+      const roomData: any = {
+        roomCode,
+        code: roomCode, // compatibility
+        id: roomCode, // compatibility
+        hostId,
+        hostName,
+        hostPhoto: hostPhotoURL || "",
+        roomName: `${hostName}'s Arena`,
+        ownerUid: hostId, // compatibility
+        ownerName: hostName, // compatibility
+        players: [hostPlayer],
+        maxPlayers,
+        status: "waiting",
+        phase: "waiting", // compatibility
+        countdown: 30,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        expiresAt: expiresAtDate,
+        mapType: "race2map",
+        mapId: "race2map", // compatibility
+        selectedCars: { [hostId]: selectedCar },
+        selectedCar: carObj,
+        selectedMap: mapObj,
+        gameState: "lobby",
+        currentPlayers: 1,
+      };
 
-        // Set/overwrite host player in subcollection
-        const hostPlayerRef = doc(db, "rooms", roomCode, "players", hostId);
-        await setDoc(hostPlayerRef, hostPlayer);
+      const roomRef = doc(db, "rooms", roomCode);
+      await setDoc(roomRef, roomData);
 
-        // Update the main room document
-        const roomRef = doc(db, "rooms", roomCode);
-        await updateDoc(roomRef, {
-          hostId,
-          hostName,
-          ownerUid: hostId,
-          ownerName: hostName,
-          players: [hostPlayer],
-          maxPlayers,
-          status: "waiting",
-          phase: "waiting",
-          countdown: 30,
-          updatedAt: serverTimestamp(),
-          expiresAt: expiresAtDate,
-          mapType,
-          mapId: mapType,
-          selectedCars: { [hostId]: selectedCar },
-          selectedCar,
-          gameState: "lobby",
-          currentPlayers: 1,
-        });
-
-      } else {
-        // Create a new room as usual
-        const rawCode = await RoomCodeGenerator.generateUnique();
-        roomCode = rawCode.trim().toUpperCase();
-
-        console.log("Creating new room:", roomCode);
-
-        const hostPlayer: RoomPlayer = {
-          uid: hostId,
-          id: hostId, // compatibility
-          playerName: hostName,
-          nickname: hostName, // compatibility
-          photoURL: hostPhotoURL || "",
-          joinedAt: Date.now(),
-          ready: true,
-          isReady: true, // compatibility
-          carId: selectedCar,
-          isHost: true,
-          isAI: false,
-        };
-
-        const expiresAtDate = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes from now
-
-        const roomData: RoomState = {
-          roomCode,
-          code: roomCode, // compatibility
-          id: roomCode, // compatibility
-          hostId,
-          hostName,
-          ownerUid: hostId, // compatibility
-          ownerName: hostName, // compatibility
-          players: [hostPlayer],
-          maxPlayers,
-          status: "waiting",
-          phase: "waiting", // compatibility
-          countdown: 30,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          expiresAt: expiresAtDate,
-          mapType,
-          mapId: mapType, // compatibility
-          selectedCars: { [hostId]: selectedCar },
-          selectedCar, // compatibility
-          gameState: "lobby",
-          currentPlayers: 1,
-        };
-
-        const roomRef = doc(db, "rooms", roomCode);
-        await setDoc(roomRef, roomData);
-
-        // Support subcollection structure used by legacy real-time loops
-        const playerRef = doc(db, "rooms", roomCode, "players", hostId);
-        await setDoc(playerRef, hostPlayer);
-      }
+      // Support subcollection structure used by legacy real-time loops
+      const playerRef = doc(db, "rooms", roomCode, "players", hostId);
+      await setDoc(playerRef, hostPlayer);
 
       return roomCode;
     } catch (e) {
@@ -258,6 +263,7 @@ export class RoomService {
 
         let updatedPlayers = [...players];
 
+        const isHostPlayer = room.hostId === playerId || room.ownerUid === playerId;
         const newPlayer: RoomPlayer = {
           uid: playerId,
           id: playerId, // compatibility
@@ -265,10 +271,10 @@ export class RoomService {
           nickname: playerName, // compatibility
           photoURL: playerPhotoURL || "",
           joinedAt: Date.now(),
-          ready: true,
-          isReady: true, // compatibility
+          ready: isHostPlayer ? true : false,
+          isReady: isHostPlayer ? true : false, // compatibility
           carId: selectedCar,
-          isHost: room.hostId === playerId,
+          isHost: isHostPlayer,
           isAI: false,
         };
 
@@ -449,19 +455,151 @@ export class RoomService {
    */
   public static async updateRoomSettings(
     roomCode: string,
-    updates: Partial<Pick<RoomState, "mapType" | "mapId" | "selectedCar">>,
+    updates: Partial<Pick<RoomState, "mapType" | "mapId" | "selectedCar"> & { laps?: number; weather?: string; environment?: string }>,
   ): Promise<void> {
     const cleanCode = roomCode.toUpperCase().trim();
     const roomRef = doc(db, "rooms", cleanCode);
     try {
-      const normalizedUpd: any = { ...updates };
-      if (updates.mapId) normalizedUpd.mapType = updates.mapId;
-      if (updates.mapType) normalizedUpd.mapId = updates.mapType;
+      const snap = await getDoc(roomRef);
+      if (!snap.exists()) return;
+      const currentData = snap.data() as any;
+
+      const normalizedUpd: any = {};
+      
+      // If car is updated
+      if (updates.selectedCar) {
+        const carId = updates.selectedCar;
+        const carObj = getSelectedCarObj(carId);
+        normalizedUpd.selectedCar = carObj;
+        normalizedUpd.hostCar = carId;
+        // Keep selectedCars record updated
+        const selectedCars = currentData.selectedCars || {};
+        selectedCars[currentData.hostId || currentData.ownerUid] = carId;
+        normalizedUpd.selectedCars = selectedCars;
+      }
+
+      // If map or laps or other map parameters are updated
+      const currentMapObj = currentData.selectedMap || {};
+      const mapId = updates.mapId || updates.mapType || currentMapObj.id || "map1";
+      const lapsValue = updates.laps !== undefined ? updates.laps : (currentMapObj.laps || 3);
+      const weatherValue = updates.weather || currentMapObj.weather || "Clear";
+      const envValue = updates.environment || currentMapObj.environment || "Forest";
+
+      if (updates.mapId || updates.mapType || updates.laps !== undefined || updates.weather || updates.environment) {
+        const mapObj = getSelectedMapObj(mapId, lapsValue);
+        // Overwrite weather and environment if provided
+        if (updates.weather) mapObj.weather = updates.weather;
+        if (updates.environment) mapObj.environment = updates.environment;
+        
+        normalizedUpd.selectedMap = mapObj;
+        normalizedUpd.mapType = mapId;
+        normalizedUpd.mapId = mapId;
+        normalizedUpd.hostMap = mapId;
+        normalizedUpd.laps = lapsValue;
+        if (updates.weather) normalizedUpd.weather = updates.weather;
+      }
 
       normalizedUpd.updatedAt = serverTimestamp();
       await updateDoc(roomRef, normalizedUpd);
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `rooms/${cleanCode}`);
+    }
+  }
+
+  /**
+   * Toggles player's readiness in both the room's player array and player subcollection
+   */
+  public static async toggleReady(roomCode: string, playerId: string, isReady: boolean): Promise<void> {
+    const cleanCode = roomCode.toUpperCase().trim();
+    const roomRef = doc(db, "rooms", cleanCode);
+    const playerRef = doc(db, "rooms", cleanCode, "players", playerId);
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(roomRef);
+        if (!snap.exists()) return;
+
+        const room = snap.data() as RoomState;
+        const players = room.players || [];
+        
+        const updatedPlayers = players.map((p) => {
+          if (p.uid === playerId) {
+            return {
+              ...p,
+              ready: isReady,
+              isReady: isReady, // compatibility
+            };
+          }
+          return p;
+        });
+
+        transaction.update(roomRef, {
+          players: updatedPlayers,
+          updatedAt: serverTimestamp(),
+        });
+
+        transaction.set(playerRef, {
+          ready: isReady,
+          isReady: isReady, // compatibility
+        }, { merge: true });
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `rooms/${cleanCode}/players/${playerId}`);
+      throw e;
+    }
+  }
+
+  /**
+   * Updates player's map download status in both the room's player array and player subcollection
+   */
+  public static async updatePlayerDownloadStatus(
+    roomCode: string,
+    playerId: string,
+    mapReady: boolean,
+    progress: number,
+    downloadedMB: number,
+    totalMB: number
+  ): Promise<void> {
+    const cleanCode = roomCode.toUpperCase().trim();
+    const roomRef = doc(db, "rooms", cleanCode);
+    const playerRef = doc(db, "rooms", cleanCode, "players", playerId);
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(roomRef);
+        if (!snap.exists()) return;
+
+        const room = snap.data() as RoomState;
+        const players = room.players || [];
+        
+        const updatedPlayers = players.map((p) => {
+          if (p.uid === playerId) {
+            return {
+              ...p,
+              mapReady,
+              downloadProgress: progress,
+              downloadedMB,
+              totalMB,
+            };
+          }
+          return p;
+        });
+
+        transaction.update(roomRef, {
+          players: updatedPlayers,
+          updatedAt: serverTimestamp(),
+        });
+
+        transaction.set(playerRef, {
+          mapReady,
+          downloadProgress: progress,
+          downloadedMB,
+          totalMB,
+        }, { merge: true });
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `rooms/${cleanCode}/players/${playerId}`);
+      throw e;
     }
   }
 
@@ -480,13 +618,20 @@ export class RoomService {
       roomRef,
       (snap) => {
         if (snap.exists()) {
-          const data = snap.data() as RoomState;
+          const data = snap.data() as any;
+          
+          // Normalize selectedCar and mapType if they are stored as objects
+          const selectedCarId = data.selectedCar && typeof data.selectedCar === "object" ? data.selectedCar.id : (data.selectedCar || "ferrari");
+          const mapId = data.selectedMap && typeof data.selectedMap === "object" ? data.selectedMap.id : (data.mapType || "map1");
+          
           onUpdate({
             ...data,
+            selectedCar: selectedCarId,
+            mapType: mapId,
+            mapId: mapId,
             code: cleanCode,
             id: cleanCode,
-            ownerUid: data.hostId,
-            mapId: data.mapType,
+            ownerUid: data.hostId || data.ownerUid,
           });
         } else {
           onUpdate(null);

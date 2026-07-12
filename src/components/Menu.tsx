@@ -595,12 +595,10 @@ export const Menu: React.FC<MenuProps> = ({ onStartGame, onCreateRoom, onJoinRoo
         playerName || "Racer",
         profile.photoURL || "",
         selectedCar,
-        selectedMap,
+        "race2map",
         maxPlayers,
       );
-      setGeneratedCode(finalCode);
-      subscribeToRoomListeners(finalCode);
-      setActivePopup("lobby");
+      navigate(`/room/${finalCode}`);
     } catch (err) {
       console.error(err);
     }
@@ -622,8 +620,7 @@ export const Menu: React.FC<MenuProps> = ({ onStartGame, onCreateRoom, onJoinRoo
 
     try {
       await NormalRoomService.joinRoom(cleanCode, profile.uid, playerName || "Racer", profile.photoURL || "");
-      subscribeToRoomListeners(cleanCode);
-      setActivePopup("lobby");
+      navigate(`/room/${cleanCode}`);
     } catch (err: any) {
       setJoinError(err.message || "Lobby full or invalid code.");
     }

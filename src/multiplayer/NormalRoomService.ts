@@ -27,6 +27,12 @@ export interface NormalPlayer {
   carId?: string;
   carColor?: string;
 
+  // Map download fields
+  mapReady?: boolean;
+  downloadProgress?: number;
+  downloadedMB?: number;
+  totalMB?: number;
+
   // Track metrics
   position?: { x: number; y: number; z: number };
   velocity?: { x: number; y: number; z: number };
@@ -49,6 +55,37 @@ export interface NormalRoom {
   currentPlayers: number;
   players: string[];
   createdAt: any;
+  // Enhanced metadata fields
+  roomName?: string;
+  hostId?: string;
+  hostName?: string;
+  hostPhoto?: string;
+  hostCar?: string;
+  hostMap?: string;
+  laps?: number;
+  weather?: string;
+  selectedCarObj?: {
+    id: string;
+    name: string;
+    manufacturer: string;
+    class: string;
+    topSpeed: number;
+    acceleration: string;
+    handling: number;
+    drivetrain: string;
+    color: string;
+    thumbnail: string;
+  };
+  selectedMapObj?: {
+    id: string;
+    name: string;
+    preview: string;
+    difficulty: string;
+    trackLength: string;
+    laps: number;
+    weather: string;
+    environment: string;
+  };
 }
 
 export class NormalRoomService {
@@ -126,15 +163,46 @@ export class NormalRoomService {
         roomCode: state.roomCode,
         ownerUid: state.hostId,
         ownerName: state.ownerName || "Host",
-        selectedCar: state.selectedCar || "porsche_911_gt3",
-        mapId: state.mapType,
+        selectedCar: typeof state.selectedCar === "object" && state.selectedCar ? (state.selectedCar as any).id : (state.selectedCar || "porsche_911_gt3"),
+        mapId: typeof state.selectedMap === "object" && state.selectedMap ? (state.selectedMap as any).id : (state.mapType || "map1"),
         status: state.status,
         maxPlayers: state.maxPlayers,
         currentPlayers: state.currentPlayers,
         players: state.players.map((p) => p.uid),
         createdAt: state.createdAt,
+        roomName: (state as any).roomName || `${state.ownerName || "Host"}'s Arena`,
+        hostId: state.hostId,
+        hostName: state.ownerName || (state as any).hostName || "Host",
+        hostPhoto: (state as any).hostPhoto || "",
+        hostCar: (state as any).hostCar || (typeof state.selectedCar === "object" && state.selectedCar ? (state.selectedCar as any).id : (state.selectedCar || "ferrari")),
+        hostMap: (state as any).hostMap || (typeof state.selectedMap === "object" && state.selectedMap ? (state.selectedMap as any).id : (state.mapType || "map1")),
+        laps: (state as any).laps || (typeof state.selectedMap === "object" && state.selectedMap ? (state.selectedMap as any).laps : 3),
+        weather: (state as any).weather || (typeof state.selectedMap === "object" && state.selectedMap ? (state.selectedMap as any).weather : "Clear"),
+        selectedCarObj: (state as any).selectedCar && typeof (state as any).selectedCar === "object" ? (state as any).selectedCar : null,
+        selectedMapObj: (state as any).selectedMap && typeof (state as any).selectedMap === "object" ? (state as any).selectedMap : null,
       });
     });
+  }
+
+  /**
+   * Updates a player's ready status in Firestore
+   */
+  static async toggleReady(code: string, uid: string, isReady: boolean): Promise<void> {
+    await RoomService.toggleReady(code, uid, isReady);
+  }
+
+  /**
+   * Updates player's map download status in Firestore
+   */
+  static async updatePlayerDownloadStatus(
+    code: string,
+    uid: string,
+    mapReady: boolean,
+    progress: number,
+    downloadedMB: number,
+    totalMB: number
+  ): Promise<void> {
+    await RoomService.updatePlayerDownloadStatus(code, uid, mapReady, progress, downloadedMB, totalMB);
   }
 
   /**
@@ -155,6 +223,10 @@ export class NormalRoomService {
           ready: d.ready ?? d.isReady ?? true,
           carId: d.carId || "porsche_911_gt3",
           carColor: d.carColor,
+          mapReady: d.mapReady,
+          downloadProgress: d.downloadProgress,
+          downloadedMB: d.downloadedMB,
+          totalMB: d.totalMB,
           position: d.position,
           velocity: d.velocity,
           angle: d.angle,
