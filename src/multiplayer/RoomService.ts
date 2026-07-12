@@ -248,14 +248,14 @@ export class RoomService {
 
         const room = snap.data() as RoomState;
 
-        // 2. Check if the room is waiting
-        if (room.status !== "waiting" && room.phase !== "waiting") {
-          throw new Error("Race already started");
-        }
-
         const players = room.players || [];
         const maxPlayers = room.maxPlayers || 3;
         const existingIdx = players.findIndex((p) => p.uid === playerId);
+
+        // 2. Check if the room is waiting (skip if player is already registered and rejoining)
+        if (existingIdx < 0 && room.status !== "waiting" && room.phase !== "waiting") {
+          throw new Error("Race already started");
+        }
 
         // 3. Check if the room is not full (skip if player is already registered and rejoining)
         if (existingIdx < 0 && players.length >= maxPlayers) {

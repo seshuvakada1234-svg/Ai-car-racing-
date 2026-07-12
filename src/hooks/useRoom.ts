@@ -78,12 +78,12 @@ export function useRoom(): UseRoomReturn {
     const listener = () => forceUpdate({});
     listeners.add(listener);
 
-    // Dynamic Safe Reconnect trigger on mount if disconnected
-    if (!globalRoom && !globalLoading) {
-      const code = RoomManager.getCurrentCode();
-      if (code) {
-        setImmediateReconnect(code);
-      }
+    // Dynamic Safe Reconnect trigger on mount if disconnected or different code
+    const code = RoomManager.getCurrentCode();
+    if (code && code !== globalRoomCode) {
+      subscribeToRoom(code);
+    } else if (!globalRoom && !globalLoading && code) {
+      setImmediateReconnect(code);
     }
 
     return () => {
@@ -152,11 +152,16 @@ export function useRoom(): UseRoomReturn {
   const leaveRoom = useCallback(async (): Promise<void> => {
     if (!globalRoomCode) return;
     const code = globalRoomCode;
-    const room = globalRoom;
+    const playerId = RoomManager.getCurrentPlayerId();
     unsubscribeFromRoom();
-    if (room && RoomManager.isHost(room)) {
-      await RoomManager.closeRoom(code);
-    }
+
+    try {
+      localStorage.removeItem("activeRoomCode");
+      sessionStorage.removeItem("last_room_code");
+    } catch (e) {}
+
+    const { RoomService } = await import("../multiplayer/RoomService");
+    await RoomService.leaveRoom(code, playerId);
   }, []);
 
   const deleteRoom = useCallback(async (): Promise<void> => {

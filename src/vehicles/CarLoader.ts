@@ -462,11 +462,12 @@ export class CarLoader {
    * FIX: Bounding box is computed with wheel meshes hidden so that the chassis
    * height (finalY) is not inflated by wheel geometry sticking out below/above.
    */
-  public static loadAndPrepareCar(carId: string, carGroup: THREE.Group): LoadedCarAsset | null {
-    if (CarLoader.failedCarIds.has(CarLoader.failKey(carId))) return null;
+  public static loadAndPrepareCar(carId: string, carGroup: THREE.Group, customCarKey?: string): LoadedCarAsset | null {
+    const lookupId = customCarKey || carId;
+    if (CarLoader.failedCarIds.has(CarLoader.failKey(lookupId))) return null;
     if (!gltfModelCache.isLoaded) return null;
 
-    const modelSource = getCarModelForId(carId);
+    const modelSource = getCarModelForId(lookupId);
     if (!modelSource) return null;
     const modelKey =
       modelSource === gltfModelCache.porsche_911_gt3
@@ -475,7 +476,7 @@ export class CarLoader {
           ? "ferrari_purosangue"
           : modelSource === gltfModelCache.bugatti_chiron_top_edition
             ? "bugatti_chiron_top_edition"
-            : carId;
+            : lookupId;
 
     const clonedModel = modelSource.clone();
     clonedModel.name = "gltf_car_model";
@@ -548,6 +549,7 @@ export class CarLoader {
 
     carGroup.add(clonedModel);
     clonedModel.updateMatrixWorld(true);
+    console.log(`GLB attached to chassis for ${carId}`);
 
     // Auto-repair pass: if the GLB exposes fewer than 4 distinct wheel roots
     // (merged geometry, missing names, no per-corner pivots), cluster mesh

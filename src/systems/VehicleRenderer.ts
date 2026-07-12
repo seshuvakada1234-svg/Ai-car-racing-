@@ -164,7 +164,7 @@ export class VehicleRenderer {
       const isGltfInGroup = carGroup.getObjectByName("gltf_car_model");
 
       if (gltfModelCache.isLoaded && !gltfAsset && !isGltfInGroup) {
-        const prepared = CarLoader.loadAndPrepareCar(c.id, carGroup);
+        const prepared = CarLoader.loadAndPrepareCar(c.id, carGroup, c.carId);
         if (prepared) {
           this.gltfAssetMap.set(c.id, prepared);
           gltfAsset = prepared;

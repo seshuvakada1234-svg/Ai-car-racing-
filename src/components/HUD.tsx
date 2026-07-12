@@ -30,6 +30,7 @@ import {
   Activity,
   Flame,
   Award,
+  LogOut,
 } from "lucide-react";
 
 interface HUDProps {
@@ -41,6 +42,7 @@ interface HUDProps {
   trackHelper: TrackGeometryHelper;
   onPauseToggle: () => void;
   isPaused: boolean;
+  onExitRace?: () => void;
 }
 
 export const HUD: React.FC<HUDProps> = ({
@@ -52,6 +54,7 @@ export const HUD: React.FC<HUDProps> = ({
   trackHelper,
   onPauseToggle,
   isPaused,
+  onExitRace,
 }) => {
   // Speed calculation
   const speedKmh = Math.floor(Math.abs(player.speed) * 3.6);
@@ -726,6 +729,22 @@ export const HUD: React.FC<HUDProps> = ({
           <Eye className="w-4 h-4" />
         </button>
 
+        {/* Mobile exit button */}
+        {onExitRace && (
+          <button
+            onClick={onExitRace}
+            style={{
+              position: "absolute",
+              top: "calc(env(safe-area-inset-top) + 12px)",
+              right: "calc(env(safe-area-inset-right) + 124px)",
+            }}
+            className="md:hidden p-2.5 rounded-full bg-red-950/80 border border-red-500/40 backdrop-blur-md text-red-400 hover:text-red-200 active:scale-95 transition-all shadow-lg pointer-events-auto flex items-center justify-center cursor-pointer"
+            title="Exit Race"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+        )}
+
       </div>
 
       {/* ================= DESKTOP TELEMETRY ROW (md:flex / hidden on mobile) ================= */}
@@ -819,6 +838,16 @@ export const HUD: React.FC<HUDProps> = ({
             >
               <Settings className="w-4 h-4" />
             </button>
+
+            {onExitRace && (
+              <button
+                onClick={onExitRace}
+                className="p-3 rounded-full bg-red-950/70 hover:bg-red-900/60 border border-red-500/30 backdrop-blur-md text-red-400 hover:text-red-200 active:scale-95 transition-all shadow-md flex items-center justify-center shrink-0 cursor-pointer"
+                title="Exit Race"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
           </div>
 
           {/* Blueprint vector Mini Map HUD overlay */}

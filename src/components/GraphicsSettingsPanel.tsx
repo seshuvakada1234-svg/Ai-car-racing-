@@ -540,6 +540,7 @@ export const GraphicsSettingsPanel: React.FC<Props> = ({ open, onClose }) => {
           >
             Reset to Recommended
           </button>
+
           <button
             onClick={onClose}
             className="px-5 py-2 rounded-md bg-yellow-500 hover:bg-yellow-400 text-black text-sm font-bold tracking-wide transition shadow-[0_0_20px_rgba(234,179,8,0.4)]"

@@ -30,6 +30,7 @@ import {
   Moon,
   Radio,
   RefreshCw,
+  LogOut,
 } from "lucide-react";
 import { selectRandomPlayerCar, setPlayerSelectedModelKey } from "./world/procedural";
 
@@ -125,6 +126,7 @@ const RacingCanvasUnit: React.FC<RacingCanvasUnitProps> = ({
 }) => {
   const navigate = useNavigate();
   const { checking, allReady, checkStatus } = useAssetStatus();
+  const [showExitDialog, setShowExitDialog] = useState(false);
 
   useEffect(() => {
     // If we directly hit /race but haven't initialized settings, redirect back
@@ -216,7 +218,75 @@ const RacingCanvasUnit: React.FC<RacingCanvasUnitProps> = ({
           trackHelper={trackHelper}
           onPauseToggle={() => phase === "racing" && setIsPaused((prev) => !prev)}
           isPaused={isPaused}
+          onExitRace={() => {
+            setShowExitDialog(true);
+            setIsPaused(true);
+          }}
         />
+      )}
+
+      {/* Exit Race Button - Cyberpunk red neon styled */}
+      {(phase === "racing" || phase === "countdown") && (
+        <div className="absolute top-4 right-4 z-[500]">
+          <button
+            id="exit-race-btn"
+            onClick={() => {
+              setShowExitDialog(true);
+              setIsPaused(true);
+            }}
+            className="group relative px-4 py-2 overflow-hidden bg-red-950/40 border border-red-500/50 hover:border-red-500 hover:bg-red-900/30 text-red-400 hover:text-red-200 text-xs font-mono font-bold tracking-widest uppercase rounded shadow-[0_0_10px_rgba(239,68,68,0.2)] hover:shadow-[0_0_15px_rgba(239,68,68,0.5)] active:scale-95 transition-all duration-200 cursor-pointer flex items-center gap-1.5 pointer-events-auto"
+            style={{
+              textShadow: "0 0 5px rgba(239,68,68,0.5)"
+            }}
+          >
+            {/* Cyberpunk corner brackets */}
+            <span className="absolute top-0 left-0 w-1.5 h-1.5 border-t border-l border-red-400 group-hover:border-red-300" />
+            <span className="absolute bottom-0 right-0 w-1.5 h-1.5 border-b border-r border-red-400 group-hover:border-red-300" />
+            
+            <LogOut className="w-3.5 h-3.5 animate-pulse" />
+            <span>EXIT RACE</span>
+          </button>
+        </div>
+      )}
+
+      {/* Exit Confirmation Dialog */}
+      {showExitDialog && (
+        <div id="exit-confirmation-dialog" className="absolute inset-0 flex items-center justify-center bg-slate-950/80 backdrop-blur-md z-[999] p-4 pointer-events-auto">
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl max-w-sm w-full text-center space-y-4 shadow-2xl">
+            <h3 className="text-xl font-bold text-white uppercase tracking-wider">Confirm Retreat?</h3>
+            <p className="text-slate-400 text-sm">
+              Are you sure you want to exit the current race? This will forfeit any points and disconnect you from the session.
+            </p>
+            <div className="flex gap-3 justify-center">
+              <button
+                onClick={() => {
+                  setShowExitDialog(false);
+                  setIsPaused(false);
+                }}
+                className="px-4 py-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-mono tracking-wide uppercase transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    if (mp.room) {
+                      await mp.leaveRoom();
+                    }
+                  } catch (e) {
+                    console.error("Error leaving room:", e);
+                  }
+                  setShowExitDialog(false);
+                  setIsPaused(false);
+                  handleHomeMenu();
+                }}
+                className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 text-white text-xs font-mono tracking-wide uppercase font-bold shadow-[0_0_10px_rgba(239,68,68,0.3)] transition cursor-pointer"
+              >
+                Abort Race
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Room multiplayer headers */}

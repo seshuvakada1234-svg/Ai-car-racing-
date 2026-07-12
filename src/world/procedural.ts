@@ -119,6 +119,17 @@ export function getCarModelForId(id: string): THREE.Group | null {
     return null;
   }
 
+  // Support direct mapping by explicit car key / modelKey
+  if (id === "ferrari" || id === "ferrari_purosangue") {
+    return gltfModelCache.ferrari_purosangue;
+  }
+  if (id === "bugatti" || id === "bugatti_chiron_top_edition" || id === "bugatti_chiron") {
+    return gltfModelCache.bugatti_chiron_top_edition;
+  }
+  if (id === "porsche" || id === "porsche_911_gt3" || id === "porsche_911") {
+    return gltfModelCache.porsche_911_gt3;
+  }
+
   if (id === "player") {
     // Strict: the player must always drive the exact vehicle they selected.
     // Never silently substitute another car if the chosen GLB isn't cached yet —

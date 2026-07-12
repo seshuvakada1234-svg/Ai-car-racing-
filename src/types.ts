@@ -43,6 +43,7 @@ export interface CarState {
   name: string;
   isAI: boolean;
   color: string;
+  carId?: string; // Player-selected car ID (e.g., 'ferrari', 'bugatti', 'porsche')
 
   // Physics state
   position: Vector3D;
