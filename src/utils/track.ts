@@ -489,7 +489,8 @@ export class TrackGeometryHelper {
   waterfallPos: THREE.Vector3 = new THREE.Vector3(1500, 35, 2900); // S3 Waterfall Hills cliffside (will be updated on load)
   finishGatePos: THREE.Vector3 = new THREE.Vector3(0, 0, 0); // Start/Finish line gate coordinates
 
-  constructor(selectedMap: "map1" | "map2" | "racing2" | string = "map1") {
+  constructor(selectedMapInput: "map1" | "map2" | "racing2" | string = "map1") {
+    const selectedMap = selectedMapInput === "race2map" ? "racing2" : selectedMapInput;
     this.mapType = selectedMap as any;
 
     if (selectedMap === "racing2") {

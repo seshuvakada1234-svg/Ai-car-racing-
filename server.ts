@@ -105,8 +105,15 @@ async function startServer() {
         return res.sendFile(p, (err) => {
           if (err) {
             const error = err as any;
-            if (error.code === "EPIPE" || error.code === "ECONNRESET" || error.message?.includes("EPIPE") || error.message?.includes("ECONNRESET")) {
-              console.log("[Static Server] Client disconnected while downloading racing2.glb (EPIPE/ECONNRESET). This is normal when a user closes or refreshes their browser.");
+            if (
+              error.code === "EPIPE" ||
+              error.code === "ECONNRESET" ||
+              error.message?.includes("EPIPE") ||
+              error.message?.includes("ECONNRESET") ||
+              error.message?.includes("aborted") ||
+              error.message?.includes("abort")
+            ) {
+              console.log("[Static Server] Client disconnected or aborted while downloading racing2.glb. This is normal when a user closes, navigates, or refreshes their browser.");
             } else {
               console.error("[Static Server] Error serving racing2.glb:", err);
             }

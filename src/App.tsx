@@ -581,12 +581,12 @@ function AppBody() {
   const handleStartMultiplayerGame = (activeRoom: any, activePlayerId: string) => {
     (window as any).playerCarAddedToScene = false;
 
-    const activeMap = activeRoom.selectedMap || "map1";
+    const activeMap = activeRoom.map || activeRoom.selectedMap || "map1";
     const helper = new TrackGeometryHelper(activeMap);
     trackHelperRef.current = helper;
     physicsServiceRef.current = new GamePhysicsService(helper);
 
-    const localRacer = activeRoom.players.find((p: any) => p.id === activePlayerId);
+    const localRacer = activeRoom.players.find((p: any) => p.id === activePlayerId || p.uid === activePlayerId);
     const cfg: GameSettings = {
       playerName: localRacer?.name || "Local Player",
       difficulty: activeRoom.difficulty || "medium",
@@ -611,8 +611,21 @@ function AppBody() {
     const curveLength = helper.curve.getLength();
     const wheelRadius = 0.38;
 
-    activeRoom.players.forEach((p: any, idx: number) => {
-      const isMe = p.id === activePlayerId;
+    // Deterministically sort the players list such that:
+    // - The host is always first (index 0, Grid 1)
+    // - The remaining players are sorted consistently to ensure all clients agree on the order
+    const sortedPlayers = [...activeRoom.players].sort((a, b) => {
+      const aIsHost = a.uid === activeRoom.hostId || a.id === activeRoom.hostId || a.isHost;
+      const bIsHost = b.uid === activeRoom.hostId || b.id === activeRoom.hostId || b.isHost;
+      if (aIsHost && !bIsHost) return -1;
+      if (!aIsHost && bIsHost) return 1;
+      const idA = a.uid || a.id || "";
+      const idB = b.uid || b.id || "";
+      return idA.localeCompare(idB);
+    });
+
+    sortedPlayers.forEach((p: any, idx: number) => {
+      const isMe = p.id === activePlayerId || p.uid === activePlayerId;
       const isAI = p.isAI;
 
       const side = idx % 2 === 0 ? -1 : 1;
@@ -628,14 +641,14 @@ function AppBody() {
       const spawnY = roadHeightTest + wheelRadius;
       const startAngle = Math.atan2(tangent.x, tangent.z);
 
-      const carId = isMe ? "player" : isAI ? p.id : `remote_${p.id}`;
+      const carId = isMe ? "player" : isAI ? p.id : `remote_${p.id || p.uid}`;
       const amIHost = activeRoom.hostId === activePlayerId;
 
       lineup.push({
         id: carId,
-        name: p.name,
+        name: p.name || p.playerName || "Driver",
         isAI: isAI && amIHost, // Only Host runs local calculations for AI
-        color: p.carColor,
+        color: p.carColor || "#0062ff",
         position: { x: spawnPos.x, y: spawnY, z: spawnPos.z },
         velocity: { x: 0, y: 0, z: 0 },
         speed: 0,

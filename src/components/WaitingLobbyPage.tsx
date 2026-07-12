@@ -1080,7 +1080,7 @@ export const WaitingLobbyPage: React.FC = () => {
               <button
                 onClick={() => {
                   if (allPlayersReady) {
-                    NormalRoomService.setRoomStatus(normalizedCode, "starting");
+                    NormalRoomService.setRoomStatus(normalizedCode, "racing");
                   }
                 }}
                 disabled={!allPlayersReady}
