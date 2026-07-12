@@ -763,22 +763,14 @@ export const WaitingLobbyPage: React.FC = () => {
             )}
           </div>
 
-          {/* LARGE IMAGE PREVIEW / CARD */}
-          <div className="relative aspect-video rounded-2xl overflow-hidden border border-white/10 group shadow-2xl bg-slate-900 shrink-0">
-            <img
-              src={carSpec.image}
-              alt={carSpec.name}
-              className="w-full h-full object-cover brightness-[0.8] contrast-[1.05] group-hover:scale-105 transition duration-500"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/30 to-transparent" />
-            
-            {/* Overlay Specs */}
-            <div className="absolute bottom-3 left-4 right-4 flex justify-between items-end">
+          {/* CAR DETAILS INFORMATION BLOCK */}
+          <div className="bg-white/[0.02] border border-white/5 p-4 rounded-2xl text-left">
+            <div className="flex justify-between items-center">
               <div>
                 <span className="text-[8px] font-black tracking-widest text-purple-400 uppercase block font-mono">{carSpec.manufacturer}</span>
-                <span className="text-base font-black text-white uppercase leading-tight tracking-tight">{carSpec.name}</span>
+                <span className="text-sm font-black text-white uppercase leading-tight tracking-tight">{carSpec.name}</span>
               </div>
-              <span className="bg-purple-600 text-white font-mono font-black text-[9px] tracking-wider px-2 py-0.5 rounded uppercase shadow-md shadow-purple-600/20">
+              <span className="bg-purple-600 text-white font-mono font-black text-[9px] tracking-wider px-2.5 py-1 rounded uppercase shadow-md shadow-purple-600/20">
                 {carSpec.class}
               </span>
             </div>
@@ -884,22 +876,14 @@ export const WaitingLobbyPage: React.FC = () => {
             )}
           </div>
 
-          {/* MAP PREVIEW IMAGE */}
-          <div className="relative aspect-video rounded-2xl overflow-hidden border border-white/10 group shadow-2xl bg-slate-900 shrink-0">
-            <img
-              src={mapSpec.image}
-              alt={mapSpec.name}
-              className="w-full h-full object-cover brightness-[0.8] contrast-[1.05] group-hover:scale-105 transition duration-500"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/30 to-transparent" />
-            
-            {/* Map metadata tags */}
-            <div className="absolute bottom-3 left-4 right-4 flex justify-between items-end">
+          {/* MAP DETAILS INFORMATION BLOCK */}
+          <div className="bg-white/[0.02] border border-white/5 p-4 rounded-2xl text-left">
+            <div className="flex justify-between items-center">
               <div>
                 <span className="text-[8px] font-black tracking-widest text-emerald-400 uppercase block font-mono">TRACK SECTOR</span>
-                <span className="text-base font-black text-white uppercase leading-tight tracking-tight">{mapSpec.name}</span>
+                <span className="text-sm font-black text-white uppercase leading-tight tracking-tight">{mapSpec.name}</span>
               </div>
-              <span className={`font-mono font-black text-[8px] tracking-wider px-2 py-0.5 rounded uppercase shadow-md ${
+              <span className={`font-mono font-black text-[8px] tracking-wider px-2.5 py-1 rounded uppercase shadow-md ${
                 mapSpec.difficulty === "easy"
                   ? "bg-emerald-600/30 text-emerald-400 border border-emerald-500/30"
                   : mapSpec.difficulty === "medium"
