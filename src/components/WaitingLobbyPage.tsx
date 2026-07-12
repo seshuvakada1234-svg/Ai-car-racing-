@@ -184,6 +184,9 @@ export const WaitingLobbyPage: React.FC = () => {
   }, []);
 
   const normalizedCode = (roomCode || "").toUpperCase().trim();
+  const isHost = room && profile ? room.ownerUid === profile.uid : false;
+  const allPlayersReady = room ? (players.length === (room.maxPlayers || 3) && players.every(p => p.ready === true)) : false;
+  const allReady = allPlayersReady;
 
   // 1. Real-time Firestore Subscriptions
   useEffect(() => {
@@ -407,8 +410,6 @@ export const WaitingLobbyPage: React.FC = () => {
     }
   }, [room, loading, navigate]);
 
-  const isHost = room && profile ? room.ownerUid === profile.uid : false;
-
   // 3. Auto-Join Trigger
   useEffect(() => {
     if (!room) return;
@@ -574,8 +575,6 @@ export const WaitingLobbyPage: React.FC = () => {
   // Ready State Calculation
   const readyCount = players.filter(p => p.ready).length;
   const totalCount = players.length;
-  const allPlayersReady = players.length === (room.maxPlayers || 3) && players.every(p => p.ready === true);
-  const allReady = allPlayersReady;
 
   return (
     <div id="room-waiting-lobby" className="w-full max-w-7xl mx-auto py-8 px-4 text-white space-y-8 flex flex-col relative">
