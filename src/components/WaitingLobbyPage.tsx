@@ -480,11 +480,39 @@ export const WaitingLobbyPage: React.FC = () => {
     }
   }, [room?.status, navigate, normalizedCode]);
 
+  const fallbackCopy = (text: string) => {
+    try {
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.style.top = "0";
+      textArea.style.left = "0";
+      textArea.style.position = "fixed";
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textArea);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (fallbackErr) {
+      console.error("Fallback copy failed:", fallbackErr);
+    }
+  };
+
   // Copy code helper
   const handleCopy = () => {
-    navigator.clipboard.writeText(normalizedCode);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      navigator.clipboard.writeText(normalizedCode).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }).catch((err) => {
+        console.warn("Clipboard writeText failed, trying fallback:", err);
+        fallbackCopy(normalizedCode);
+      });
+    } catch (err) {
+      console.warn("Clipboard writeText threw error, trying fallback:", err);
+      fallbackCopy(normalizedCode);
+    }
   };
 
   // Leave room triggers

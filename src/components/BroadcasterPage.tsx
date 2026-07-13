@@ -438,20 +438,57 @@ export const BroadcasterDashboard: React.FC = () => {
     );
   }
 
+  const fallbackCopy = (text: string, statusType: "code" | "link") => {
+    try {
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.style.top = "0";
+      textArea.style.left = "0";
+      textArea.style.position = "fixed";
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textArea);
+      setCopyStatus(statusType);
+      setTimeout(() => setCopyStatus("none"), 2000);
+    } catch (fallbackErr) {
+      console.error("Fallback copy failed:", fallbackErr);
+    }
+  };
+
   // Copy helpers
   const handleCopyCode = () => {
     if (!liveCurrent?.roomCode) return;
-    navigator.clipboard.writeText(liveCurrent.roomCode);
-    setCopyStatus("code");
-    setTimeout(() => setCopyStatus("none"), 2000);
+    try {
+      navigator.clipboard.writeText(liveCurrent.roomCode).then(() => {
+        setCopyStatus("code");
+        setTimeout(() => setCopyStatus("none"), 2000);
+      }).catch((err) => {
+        console.warn("Clipboard writeText failed, trying fallback:", err);
+        fallbackCopy(liveCurrent.roomCode, "code");
+      });
+    } catch (err) {
+      console.warn("Clipboard writeText threw error, trying fallback:", err);
+      fallbackCopy(liveCurrent.roomCode, "code");
+    }
   };
 
   const handleCopyLink = () => {
     if (!liveCurrent?.roomCode) return;
     const link = `${window.location.origin}/?room=${liveCurrent.roomCode}`;
-    navigator.clipboard.writeText(link);
-    setCopyStatus("link");
-    setTimeout(() => setCopyStatus("none"), 2000);
+    try {
+      navigator.clipboard.writeText(link).then(() => {
+        setCopyStatus("link");
+        setTimeout(() => setCopyStatus("none"), 2000);
+      }).catch((err) => {
+        console.warn("Clipboard writeText failed, trying fallback:", err);
+        fallbackCopy(link, "link");
+      });
+    } catch (err) {
+      console.warn("Clipboard writeText threw error, trying fallback:", err);
+      fallbackCopy(link, "link");
+    }
   };
 
   // Interactive control callbacks

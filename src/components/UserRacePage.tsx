@@ -27,6 +27,26 @@ import { doc, onSnapshot } from "firebase/firestore";
 import { Loader2, Compass, CheckCircle2, AlertTriangle, LogOut } from "lucide-react";
 import * as THREE from "three";
 import { GameSettings, CarState, ControlsState, GamePhase } from "../types";
+import { MultiplayerRaceLoadingScreen } from "./MultiplayerRaceLoadingScreen";
+import { NormalRoomService } from "../multiplayer/NormalRoomService";
+import {
+  initializeRaceStartSync,
+  updatePlayerReady,
+  startCountdown,
+  waitForCountdown,
+  beginRace,
+  getSynchronizedServerTime,
+} from "../multiplayer/multiplayerRaceStartSync";
+
+const getCarIdString = (carValue: any): string => {
+  if (!carValue) return "ferrari";
+  if (typeof carValue === "string") return carValue;
+  if (typeof carValue === "object") {
+    if (carValue.id && typeof carValue.id === "string") return carValue.id;
+    if (carValue.carId && typeof carValue.carId === "string") return carValue.carId;
+  }
+  return "ferrari";
+};
 
 export const RaceScene: React.FC = () => {
   const { roomCode } = useParams<{ roomCode: string }>();
@@ -80,6 +100,25 @@ export const RaceScene: React.FC = () => {
   const [totalMB, setTotalMB] = useState<number>(0);
   const [carsLoadedMap, setCarsLoadedMap] = useState<boolean>(false);
   const [carLoadingLabel, setCarLoadingLabel] = useState<string>("");
+
+  // New multiplayer loading states
+  const [loadingMultiplayer, setLoadingMultiplayer] = useState(true);
+  const [mapVerified, setMapVerified] = useState(false);
+  const [mapDownloadProgress, setMapDownloadProgress] = useState(0);
+  const [mapDownloadReady, setMapDownloadReady] = useState(false);
+
+  const [carVerified, setCarVerified] = useState(false);
+  const [carDownloadProgress, setCarDownloadProgress] = useState(0);
+  const [carDownloadReady, setCarDownloadReady] = useState(false);
+
+  const [glbParsing, setGlbParsing] = useState(false);
+  const [glbParsed, setGlbParsed] = useState(false);
+
+  const [vehicleInitProgress, setVehicleInitProgress] = useState(0);
+  const [vehicleInitReady, setVehicleInitReady] = useState(false);
+
+  const [allPlayersReadyTriggered, setAllPlayersReadyTriggered] = useState(false);
+  const [countdownStarted, setCountdownStarted] = useState(false);
 
   const [showExitDialog, setShowExitDialog] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
@@ -234,13 +273,29 @@ export const RaceScene: React.FC = () => {
     const checkAndDownloadMap = async () => {
       const activeMapId = mp.room.map || mp.room.selectedMap || "map1";
       const isCustomMap = activeMapId === "race2map" || activeMapId === "racing2";
+      const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
+
+      setMapVerified(true);
 
       if (!isCustomMap) {
         logStep("mapCacheChecked", "success");
         logStep("mapLoaded", "success");
         setMapReadyLocal(true);
         setDownloadProgress(100);
+        setMapDownloadProgress(100);
+        setMapDownloadReady(true);
         setIsCheckingCache(false);
+        
+        if (activePlayerId && mp.room?.roomCode) {
+          try {
+            await NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
+              mapReady: true,
+              mapProgress: 100
+            });
+          } catch (e) {
+            console.error("Failed to update map status:", e);
+          }
+        }
         return;
       }
 
@@ -258,13 +313,27 @@ export const RaceScene: React.FC = () => {
           logStep("mapLoaded", "success");
           setMapReadyLocal(true);
           setDownloadProgress(100);
+          setMapDownloadProgress(100);
+          setMapDownloadReady(true);
           setIsCheckingCache(false);
+          
+          if (activePlayerId && mp.room?.roomCode) {
+            try {
+              await NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
+                mapReady: true,
+                mapProgress: 100
+              });
+            } catch (e) {
+              console.error("Failed to update map status:", e);
+            }
+          }
           return;
         }
 
         // Trigger map download with progress reporting
         setIsCheckingCache(false);
         setDownloadProgress(0);
+        setMapDownloadProgress(0);
 
         const targetUrl = `/api/proxy?url=${encodeURIComponent(mapUrl)}`;
         let response: Response;
@@ -303,7 +372,17 @@ export const RaceScene: React.FC = () => {
 
           const percent = Math.min(Math.round((receivedBytes / totalBytes) * 100), 99);
           setDownloadProgress(percent);
+          setMapDownloadProgress(percent);
           setDownloadedMB(parseFloat((receivedBytes / (1024 * 1024)).toFixed(1)));
+          
+          // Throttled Firestore progress update
+          if (percent % 10 === 0 && activePlayerId && mp.room?.roomCode) {
+            NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
+              mapProgress: percent,
+              mapReady: false,
+              ready: false
+            }).catch(console.error);
+          }
         }
 
         const combinedBlob = new Blob(chunks);
@@ -322,13 +401,39 @@ export const RaceScene: React.FC = () => {
         logStep("mapLoaded", "success");
         setMapReadyLocal(true);
         setDownloadProgress(100);
+        setMapDownloadProgress(100);
+        setMapDownloadReady(true);
+        
+        if (activePlayerId && mp.room?.roomCode) {
+          try {
+            await NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
+              mapReady: true,
+              mapProgress: 100
+            });
+          } catch (e) {
+            console.error("Failed to update map status:", e);
+          }
+        }
       } catch (err) {
         console.error("Map downloading/caching failed:", err);
         logStep("mapLoaded", "failed");
         // Graceful fallback to avoid locking users out in case of network issues
         setMapReadyLocal(true);
         setDownloadProgress(100);
+        setMapDownloadProgress(100);
+        setMapDownloadReady(true);
         setIsCheckingCache(false);
+        
+        if (activePlayerId && mp.room?.roomCode) {
+          try {
+            await NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
+              mapReady: true,
+              mapProgress: 100
+            });
+          } catch (e) {
+            console.error("Failed to update map status fallback:", e);
+          }
+        }
       }
     };
 
@@ -343,10 +448,16 @@ export const RaceScene: React.FC = () => {
 
     const loadAllPlayerCars = async () => {
       try {
+        const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
+        const localRacer = mp.room.players.find((p: any) => p.uid === activePlayerId || p.id === activePlayerId);
+        const myNormalizedCarId = getCarIdString(localRacer?.carId);
+
+        setCarVerified(true);
+
         const uniqueCarIds = Array.from(
           new Set(
             mp.room.players.map((p: any) => {
-              const cid = p.carId || "ferrari";
+              const cid = getCarIdString(p.carId);
               if (cid.toLowerCase().includes("porsche")) return "porsche";
               if (cid.toLowerCase().includes("bugatti")) return "bugatti";
               return "ferrari";
@@ -359,19 +470,42 @@ export const RaceScene: React.FC = () => {
         for (let i = 0; i < uniqueCarIds.length; i++) {
           if (!active) return;
           const carId = uniqueCarIds[i];
+          const isMyCar = carId === myNormalizedCarId || (carId === "ferrari" && !["porsche", "bugatti"].includes(myNormalizedCarId));
           const carMapKey = carId === "porsche"
             ? "porsche_911_gt3"
             : carId === "bugatti"
               ? "bugatti_chiron_top_edition"
               : "ferrari_purosangue";
 
-          console.log(`[Race Init] Starting load for: ${carMapKey}`);
+          console.log(`[Race Init] Starting load for: ${carMapKey}, isMyCar: ${isMyCar}`);
           setCarLoadingLabel(`Loading vehicle: ${carId.toUpperCase()}`);
+
+          if (isMyCar) {
+            setCarDownloadReady(false);
+            setCarDownloadProgress(0);
+          }
 
           // Check if already loaded in gltfModelCache
           if (gltfModelCache[carMapKey as keyof typeof gltfModelCache]) {
             console.log(`[Race Init] GLB already loaded in cache for: ${carMapKey}`);
-            setDownloadProgress(100);
+            if (isMyCar) {
+              setDownloadProgress(100);
+              setCarDownloadProgress(100);
+              setCarDownloadReady(true);
+              setGlbParsing(true);
+              
+              if (activePlayerId && mp.room?.roomCode) {
+                try {
+                  await NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
+                    carReady: true,
+                    carProgress: 100,
+                    glbParsing: true
+                  });
+                } catch (e) {
+                  console.error("Failed to update car status cached:", e);
+                }
+              }
+            }
             continue;
           }
 
@@ -389,6 +523,16 @@ export const RaceScene: React.FC = () => {
                 blob = await AssetManager.downloadAsset(carMapKey, (prog) => {
                   if (active) {
                     setDownloadProgress(prog.percent);
+                    if (isMyCar) {
+                      setCarDownloadProgress(prog.percent);
+                      if (prog.percent % 10 === 0 && activePlayerId && mp.room?.roomCode) {
+                        NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
+                          carProgress: prog.percent,
+                          carReady: false,
+                          ready: false
+                        }).catch(console.error);
+                      }
+                    }
                   }
                 });
               } catch (downloadErr) {
@@ -401,6 +545,28 @@ export const RaceScene: React.FC = () => {
             }
           } else {
             setDownloadProgress(100);
+            if (isMyCar) {
+              setCarDownloadProgress(100);
+              setCarDownloadReady(true);
+            }
+          }
+
+          if (isMyCar) {
+            setCarDownloadProgress(100);
+            setCarDownloadReady(true);
+            setGlbParsing(true);
+            
+            if (activePlayerId && mp.room?.roomCode) {
+              try {
+                await NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
+                  carReady: true,
+                  carProgress: 100,
+                  glbParsing: true
+                });
+              } catch (e) {
+                console.error("Failed to update car status downloaded:", e);
+              }
+            }
           }
 
           if (blob) {
@@ -422,6 +588,9 @@ export const RaceScene: React.FC = () => {
                     gltfModelCache.isLoaded = true;
                     dracoLoader.dispose();
                     console.log(`[Race Init] ${carMapKey} successfully parsed and cached.`);
+                    if (isMyCar) {
+                      setGlbParsed(true);
+                    }
                     resolvePromise();
                   } catch (err) {
                     dracoLoader.dispose();
@@ -474,7 +643,7 @@ export const RaceScene: React.FC = () => {
       const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
       const localRacer = mp.room.players.find((p: any) => p.uid === activePlayerId || p.id === activePlayerId);
 
-      const rawCarId = localRacer?.carId || "ferrari";
+      const rawCarId = getCarIdString(localRacer?.carId);
       const baseCarId = rawCarId.toLowerCase().includes("porsche")
         ? "porsche"
         : rawCarId.toLowerCase().includes("bugatti")
@@ -528,12 +697,22 @@ export const RaceScene: React.FC = () => {
         const carId = isMe ? "player" : isAI ? p.id : `remote_${p.id || p.uid}`;
         const amIHost = mp.room.hostId === activePlayerId;
 
-        const pRawCarId = p.carId || "ferrari";
+        const pRawCarId = getCarIdString(p.carId);
         const pBaseCarId = pRawCarId.toLowerCase().includes("porsche")
           ? "porsche"
           : pRawCarId.toLowerCase().includes("bugatti")
             ? "bugatti"
             : "ferrari";
+
+        const hasSavedState = p.position && typeof p.position.x === 'number' && typeof p.position.z === 'number';
+        const finalPosition = hasSavedState ? { x: p.position.x, y: p.position.y ?? spawnY, z: p.position.z } : { x: spawnPos.x, y: spawnY, z: spawnPos.z };
+        const finalVelocity = hasSavedState && p.velocity ? { x: p.velocity.x ?? 0, y: p.velocity.y ?? 0, z: p.velocity.z ?? 0 } : { x: 0, y: 0, z: 0 };
+        const finalAngle = hasSavedState && typeof p.angle === 'number' ? p.angle : startAngle;
+        const finalSpeed = hasSavedState && typeof p.speed === 'number' ? p.speed : 0;
+        const finalLap = hasSavedState && typeof p.currentLap === 'number' ? p.currentLap : 1;
+        const finalCheckpoint = hasSavedState && typeof p.currentCheckpointIndex === 'number' ? p.currentCheckpointIndex : 0;
+        const finalTotalDistance = hasSavedState && typeof p.totalDistanceTraveled === 'number' ? p.totalDistanceTraveled : -idx * 8.5;
+        const finalFinished = hasSavedState && typeof p.isFinished === 'boolean' ? p.isFinished : false;
 
         lineup.push({
           id: carId,
@@ -541,19 +720,19 @@ export const RaceScene: React.FC = () => {
           isAI: isAI && amIHost,
           color: p.carColor || "#0062ff",
           carId: pBaseCarId,
-          position: { x: spawnPos.x, y: spawnY, z: spawnPos.z },
-          velocity: { x: 0, y: 0, z: 0 },
-          speed: 0,
-          angle: startAngle,
+          position: finalPosition,
+          velocity: finalVelocity,
+          speed: finalSpeed,
+          angle: finalAngle,
           angularVelocity: 0,
           driftFactor: 0,
-          isDrifting: false,
-          currentLap: 1,
-          currentCheckpointIndex: 0,
+          isDrifting: hasSavedState && typeof p.isDrifting === 'boolean' ? p.isDrifting : false,
+          currentLap: finalLap,
+          currentCheckpointIndex: finalCheckpoint,
           distanceToNextCheckpoint: 999,
           racePosition: idx + 1,
-          totalDistanceTraveled: -idx * 8.5,
-          isFinished: false,
+          totalDistanceTraveled: finalTotalDistance,
+          isFinished: finalFinished,
           lastActiveTime: Date.now(),
           nitroCharged: 60,
           isNitroActive: false,
@@ -566,8 +745,9 @@ export const RaceScene: React.FC = () => {
 
       setCars(lineup);
       logStep("spawnPointsAssigned", "success");
-      setPhase("countdown");
-      setCountdown(3);
+      setVehicleInitProgress(30);
+      setPhase("menu");
+      setCountdown(60);
       setElapsedTime(0);
       setIsPaused(false);
     } catch (e) {
@@ -577,90 +757,185 @@ export const RaceScene: React.FC = () => {
     }
   }, [mp.room?.id, mapReadyLocal, carsLoadedMap]);
 
-  // Handle countdown sequences
+  // Reset player's loading status on mount/entry to the race scene
   useEffect(() => {
-    if (phase !== "countdown") return;
+    if (!mp.room?.roomCode) return;
+    const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
+    if (!activePlayerId) return;
 
-    const tickCountdown = () => {
-      const isRacing2 = mp.room?.map === "racing2" || mp.room?.map === "race2map" || mp.room?.selectedMap === "racing2" || mp.room?.selectedMap === "race2map";
-      
-      if (!(window as any).countdownStuckSecs) {
-        (window as any).countdownStuckSecs = 0;
-      }
+    console.log("[Race Init] Resetting player loading status for a fresh race session...");
+    NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
+      mapReady: false,
+      mapProgress: 0,
+      carReady: false,
+      carProgress: 0,
+      glbParsing: false,
+      vehicleInitialized: false,
+      sceneReady: false,
+      connected: false,
+      ready: false
+    }).catch((err) => {
+      console.error("Failed to reset player loading status on mount:", err);
+    });
+  }, [mp.room?.roomCode, mp.playerId]);
 
-      let carLoaded = !!(window as any).carLoaded || !!(window as any).playerCarAddedToScene;
-      let mapLoaded = !isRacing2 || !!(window as any).mapLoaded;
-      let shadersCompiled = !!(window as any).shadersCompiled;
-      let worldReady = !!(window as any).worldReady;
+  // Reactive vehicle initialization tracker
+  useEffect(() => {
+    if (!mp.room || !mapReadyLocal || !carsLoadedMap || !trackHelper || !physicsService || cars.length === 0) return;
 
-      if (!carLoaded) console.log("[Race Init] Waiting for playerCarAddedToScene / carLoaded...");
-      else logStep("playerCarSpawned", "success");
+    let active = true;
+    const checkInterval = setInterval(async () => {
+      if (!active) return;
 
-      if (!mapLoaded) console.log("[Race Init] Waiting for mapLoaded...");
-      else logStep("mapLoaded", "success");
+      const carLoaded = !!(window as any).carLoaded || !!(window as any).playerCarAddedToScene;
+      const worldReady = !!(window as any).worldReady;
 
-      if (!worldReady) console.log("[Race Init] Waiting for worldReady...");
-      else logStep("raceSceneMounted", "success");
+      if (carLoaded && !worldReady) {
+        setVehicleInitProgress(70);
+      } else if (carLoaded && worldReady) {
+        setVehicleInitProgress(100);
+        setVehicleInitReady(true);
+        clearInterval(checkInterval);
 
-      if (!carLoaded || !mapLoaded || !shadersCompiled || !worldReady) {
-        (window as any).countdownStuckSecs += 1;
-        
-        // If stuck for more than 8 seconds, force-bypass constraints to ensure race start!
-        if ((window as any).countdownStuckSecs > 8) {
-          console.warn("[Race Init] 3D assets taking too long. Activating safety bypass.");
-          (window as any).carLoaded = true;
-          (window as any).playerCarAddedToScene = true;
-          (window as any).mapLoaded = true;
-          (window as any).shadersCompiled = true;
-          (window as any).worldReady = true;
-
-          carLoaded = true;
-          mapLoaded = true;
-          shadersCompiled = true;
-          worldReady = true;
-
-          logStep("playerCarSpawned", "success");
-          logStep("mapLoaded", "success");
-          logStep("raceSceneMounted", "success");
-        } else {
-          setCountdownLabel(isRacing2 ? "Synchronizing 3D road assets" : "Warming engine core");
-          setCountdownMsg("...");
-          return;
-        }
-      }
-
-      logStep("playerCarSpawned", "success");
-      logStep("raceSceneMounted", "success");
-
-      setCountdown((prev) => {
-        const next = prev - 1;
-        if (next > 0) {
-          setCountdownLabel("Match begins in");
-          setCountdownMsg(String(next));
-        } else if (next === 0) {
-          setCountdownLabel("Green light");
-          setCountdownMsg("GO!");
-        } else if (next < 0) {
-          setPhase("racing");
-          lastTimeRef.current = Date.now();
-          if (countdownTimerRef.current) {
-            clearInterval(countdownTimerRef.current);
-            countdownTimerRef.current = null;
+        const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
+        if (activePlayerId && mp.room?.roomCode) {
+          console.log("[Race Init] Local Vehicle Ready! Updating Firestore status to ready.");
+          try {
+            await NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
+              mapReady: true,
+              carReady: true,
+              vehicleInitialized: true,
+              sceneReady: true,
+              connected: true,
+              ready: true
+            });
+          } catch (e) {
+            console.error("Failed to update ready status:", e);
           }
         }
-        return next;
-      });
-    };
-
-    countdownTimerRef.current = window.setInterval(tickCountdown, 1000);
+      }
+    }, 200);
 
     return () => {
-      if (countdownTimerRef.current) {
-        clearInterval(countdownTimerRef.current);
-        countdownTimerRef.current = null;
-      }
+      active = false;
+      clearInterval(checkInterval);
     };
-  }, [phase, mp.room?.map, mp.room?.selectedMap]);
+  }, [mp.room?.id, mapReadyLocal, carsLoadedMap, trackHelper, physicsService, cars.length]);
+
+  // Host continuously watches all players
+  useEffect(() => {
+    if (!mp.room || !mp.room.players || !mp.room.roomCode) return;
+
+    const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
+    const isHost = mp.room.hostId === activePlayerId;
+    if (!isHost) return;
+
+    const humans = mp.room.players.filter((p: any) => !p.isAI);
+    const everyoneReady = humans.length > 0 && humans.every(
+      (p: any) => p.mapReady === true && p.carReady === true && p.sceneReady === true
+    );
+
+    if (mp.room.status === "racing" && !mp.room.raceStarted && everyoneReady) {
+      console.log("[Host Action] All players ready! Updating room status to countdown with server timestamp.");
+      startCountdown(mp.room.roomCode).catch((err) => {
+        console.error("Failed to update room status to countdown:", err);
+      });
+    } else if (mp.room.status === "countdown" && !everyoneReady) {
+      console.log("[Host Action] Someone refreshed or is loading during countdown! Reverting room status back to racing loading phase.");
+      NormalRoomService.setRoomStatus(mp.room.roomCode, "racing").catch((err) => {
+        console.error("Failed to revert room status to racing:", err);
+      });
+    }
+  }, [mp.room?.players, mp.room?.status, mp.room?.raceStarted, mp.room?.roomCode, mp.room?.hostId, mp.playerId]);
+
+  // Listen for room status and local loading readiness to manage game phase and loading screen
+  useEffect(() => {
+    if (!mp.room || !mp.room.roomCode) return;
+
+    if (mp.room.status === "racing" && !mp.room.raceStarted) {
+      // 1. Loading/waiting phase
+      setLoadingMultiplayer(true);
+      setCountdownStarted(false);
+      setPhase("menu");
+    } else if (mp.room.status === "countdown") {
+      // 2. Countdown phase
+      if (!vehicleInitReady) {
+        setLoadingMultiplayer(true);
+        setCountdownStarted(false);
+        setPhase("menu");
+      } else {
+        setLoadingMultiplayer(false);
+        setCountdownStarted(true);
+        setPhase("countdown");
+
+        const startTime = mp.room.countdownStartTime;
+        if (!startTime) {
+          setCountdown(60);
+          setCountdownMsg("60");
+          setCountdownLabel("Match begins in");
+          return;
+        }
+
+        const startTimeMillis = startTime.toMillis ? startTime.toMillis() : new Date(startTime).getTime();
+
+        const tick = () => {
+          const currentServerTime = getSynchronizedServerTime();
+          const elapsedSecs = Math.floor((currentServerTime - startTimeMillis) / 1000);
+          const remaining = 60 - elapsedSecs;
+
+          if (remaining > 0) {
+            setCountdown(remaining);
+            setCountdownMsg(String(remaining));
+            setCountdownLabel("Match begins in");
+          } else if (remaining === 0) {
+            setCountdown(0);
+            setCountdownMsg("GO!");
+            setCountdownLabel("Green light");
+          } else {
+            setPhase("racing");
+            setCountdownStarted(false);
+            lastTimeRef.current = Date.now();
+
+            // Host only: update room status to racing in Firestore so spectators/broadcasters can follow
+            const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
+            const isHost = mp.room.hostId === activePlayerId;
+            if (isHost) {
+              beginRace(mp.room.roomCode).catch((err) => {
+                console.error("Host failed to transition room to racing:", err);
+              });
+            }
+          }
+        };
+
+        tick();
+        const intervalId = setInterval(tick, 100);
+        return () => clearInterval(intervalId);
+      }
+    } else if (mp.room.status === "racing" && mp.room.raceStarted) {
+      // 3. Active racing phase (reconnect/join mid-race)
+      if (!vehicleInitReady) {
+        setLoadingMultiplayer(true);
+        setCountdownStarted(false);
+        setPhase("menu");
+      } else {
+        setLoadingMultiplayer(false);
+        setCountdownStarted(false);
+        setPhase("racing");
+        lastTimeRef.current = Date.now();
+      }
+    }
+  }, [mp.room?.status, mp.room?.raceStarted, mp.room?.countdownStartTime, mp.room?.roomCode, mp.room?.hostId, mp.playerId, vehicleInitReady]);
+
+  const handleRemovePlayer = async (pid: string) => {
+    if (!mp.room?.roomCode) return;
+    try {
+      const { RoomService } = await import("../multiplayer/RoomService");
+      await RoomService.leaveRoom(mp.room.roomCode, pid);
+      console.log(`[Host Action] Successfully removed player: ${pid}`);
+    } catch (err) {
+      console.error("Failed to remove player:", err);
+    }
+  };
 
   // Overall timing clock elapsed increments helper
   useEffect(() => {
@@ -709,7 +984,7 @@ export const RaceScene: React.FC = () => {
     const nextCars = updatedCars.map((car) => {
       if (car.id === "player") {
         const myPl = mp.room?.players?.find((p: any) => p.uid === activePlayerId || p.id === activePlayerId);
-        const rawCid = myPl?.carId || car.carId || "ferrari";
+        const rawCid = getCarIdString(myPl?.carId || car.carId);
         car.carId = rawCid.toLowerCase().includes("porsche")
           ? "porsche"
           : rawCid.toLowerCase().includes("bugatti")
@@ -721,7 +996,7 @@ export const RaceScene: React.FC = () => {
       const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
       const netPlayer = mp.room?.players?.find((p: any) => p.id === netId || p.uid === netId);
       if (netPlayer) {
-        const rawCid = netPlayer.carId || "ferrari";
+        const rawCid = getCarIdString(netPlayer.carId);
         car.carId = rawCid.toLowerCase().includes("porsche")
           ? "porsche"
           : rawCid.toLowerCase().includes("bugatti")
@@ -765,77 +1040,69 @@ export const RaceScene: React.FC = () => {
   }
 
   if (!mp.room || isCheckingCache || !mapReadyLocal || !carsLoadedMap || !trackHelper || !physicsService || cars.length === 0 || initTimeoutTriggered) {
-    return (
-      <div className="fixed inset-0 bg-slate-950 flex flex-col items-center justify-center font-sans text-white z-50 select-none p-6">
-        {initTimeoutTriggered ? (
+    if (initTimeoutTriggered) {
+      return (
+        <div className="fixed inset-0 bg-slate-950 flex flex-col items-center justify-center font-sans text-white z-50 select-none p-6">
           <div className="relative w-24 h-24 mb-8 flex items-center justify-center bg-rose-500/10 border-4 border-rose-500 rounded-full animate-bounce">
             <AlertTriangle className="w-10 h-10 text-rose-500" />
           </div>
-        ) : (
-          <div className="relative w-24 h-24 mb-8">
-            <div className="absolute inset-0 rounded-full border-4 border-cyan-500/10" />
-            <div className="absolute inset-0 rounded-full border-4 border-t-cyan-400 animate-spin" />
-            <Compass className="absolute inset-0 m-auto w-10 h-10 text-cyan-400/50 rotate-45 animate-pulse" />
-          </div>
-        )}
 
-        <div className="max-w-md w-full space-y-6 text-center">
-          <div className="space-y-1">
-            <h2 className="text-lg font-black uppercase tracking-wider text-white">
-              {initTimeoutTriggered ? "INITIALIZATION FAILED" : "CONNECTING TO ARENA FEED..."}
-            </h2>
-            <p className="text-xs text-slate-400 font-mono">
-              {errorMessage || "Preparing racing grids & assets"}
-            </p>
-          </div>
+          <div className="max-w-md w-full space-y-6 text-center">
+            <div className="space-y-1">
+              <h2 className="text-lg font-black uppercase tracking-wider text-white">
+                INITIALIZATION FAILED
+              </h2>
+              <p className="text-xs text-slate-400 font-mono">
+                {errorMessage || "Preparing racing grids & assets"}
+              </p>
+            </div>
 
-          {/* Status logs */}
-          <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-4 text-left space-y-2 font-mono text-xs max-w-sm mx-auto">
-            <div className="flex justify-between items-center">
-              <span className="text-slate-400">1. Connected to Room:</span>
-              <span className={initLogs.connectedToRoom === "success" ? "text-emerald-400 font-bold" : initLogs.connectedToRoom === "failed" ? "text-rose-500 font-bold" : "text-amber-400 animate-pulse font-bold"}>
-                {initLogs.connectedToRoom.toUpperCase()}
-              </span>
+            {/* Status logs */}
+            <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-4 text-left space-y-2 font-mono text-xs max-w-sm mx-auto">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">1. Connected to Room:</span>
+                <span className={initLogs.connectedToRoom === "success" ? "text-emerald-400 font-bold" : initLogs.connectedToRoom === "failed" ? "text-rose-500 font-bold" : "text-amber-400 animate-pulse font-bold"}>
+                  {initLogs.connectedToRoom.toUpperCase()}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">2. Firestore Loaded:</span>
+                <span className={initLogs.firestoreRoomLoaded === "success" ? "text-emerald-400 font-bold" : initLogs.firestoreRoomLoaded === "failed" ? "text-rose-500 font-bold" : "text-amber-400 animate-pulse font-bold"}>
+                  {initLogs.firestoreRoomLoaded.toUpperCase()}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">3. WebSocket Bypass (Firestore Sync):</span>
+                <span className={initLogs.websocketConnected === "success" ? "text-emerald-400 font-bold" : "text-amber-400 animate-pulse font-bold"}>
+                  {initLogs.websocketConnected === "success" ? "ACTIVE" : "PENDING"}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">4. Map Cache Check:</span>
+                <span className={initLogs.mapCacheChecked === "success" ? "text-emerald-400 font-bold" : initLogs.mapCacheChecked === "failed" ? "text-rose-500 font-bold" : "text-amber-400 animate-pulse font-bold"}>
+                  {initLogs.mapCacheChecked.toUpperCase()}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">5. Map Downloaded:</span>
+                <span className={initLogs.mapLoaded === "success" ? "text-emerald-400 font-bold" : initLogs.mapLoaded === "failed" ? "text-rose-500 font-bold" : "text-amber-400 animate-pulse font-bold"}>
+                  {initLogs.mapLoaded.toUpperCase()}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">6. Physics Service:</span>
+                <span className={initLogs.physicsInitialized === "success" ? "text-emerald-400 font-bold" : initLogs.physicsInitialized === "failed" ? "text-rose-500 font-bold" : "text-amber-400 animate-pulse font-bold"}>
+                  {initLogs.physicsInitialized.toUpperCase()}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">7. Spawn Lineup:</span>
+                <span className={initLogs.spawnPointsAssigned === "success" ? "text-emerald-400 font-bold" : initLogs.spawnPointsAssigned === "failed" ? "text-rose-500 font-bold" : "text-amber-400 animate-pulse font-bold"}>
+                  {initLogs.spawnPointsAssigned.toUpperCase()}
+                </span>
+              </div>
             </div>
-            <div className="flex justify-between items-center">
-              <span className="text-slate-400">2. Firestore Loaded:</span>
-              <span className={initLogs.firestoreRoomLoaded === "success" ? "text-emerald-400 font-bold" : initLogs.firestoreRoomLoaded === "failed" ? "text-rose-500 font-bold" : "text-amber-400 animate-pulse font-bold"}>
-                {initLogs.firestoreRoomLoaded.toUpperCase()}
-              </span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-slate-400">3. WebSocket Bypass (Firestore Sync):</span>
-              <span className={initLogs.websocketConnected === "success" ? "text-emerald-400 font-bold" : "text-amber-400 animate-pulse font-bold"}>
-                {initLogs.websocketConnected === "success" ? "ACTIVE" : "PENDING"}
-              </span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-slate-400">4. Map Cache Check:</span>
-              <span className={initLogs.mapCacheChecked === "success" ? "text-emerald-400 font-bold" : initLogs.mapCacheChecked === "failed" ? "text-rose-500 font-bold" : "text-amber-400 animate-pulse font-bold"}>
-                {initLogs.mapCacheChecked.toUpperCase()}
-              </span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-slate-400">5. Map Downloaded:</span>
-              <span className={initLogs.mapLoaded === "success" ? "text-emerald-400 font-bold" : initLogs.mapLoaded === "failed" ? "text-rose-500 font-bold" : "text-amber-400 animate-pulse font-bold"}>
-                {initLogs.mapLoaded.toUpperCase()}
-              </span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-slate-400">6. Physics Service:</span>
-              <span className={initLogs.physicsInitialized === "success" ? "text-emerald-400 font-bold" : initLogs.physicsInitialized === "failed" ? "text-rose-500 font-bold" : "text-amber-400 animate-pulse font-bold"}>
-                {initLogs.physicsInitialized.toUpperCase()}
-              </span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-slate-400">7. Spawn Lineup:</span>
-              <span className={initLogs.spawnPointsAssigned === "success" ? "text-emerald-400 font-bold" : initLogs.spawnPointsAssigned === "failed" ? "text-rose-500 font-bold" : "text-amber-400 animate-pulse font-bold"}>
-                {initLogs.spawnPointsAssigned.toUpperCase()}
-              </span>
-            </div>
-          </div>
 
-          {initTimeoutTriggered && (
             <div className="flex gap-4 justify-center pt-2">
               <button
                 onClick={handleRetry}
@@ -850,26 +1117,31 @@ export const RaceScene: React.FC = () => {
                 EXIT LOBBY
               </button>
             </div>
-          )}
-
-          {!isCheckingCache && downloadProgress !== null && !initTimeoutTriggered && (
-            <div className="space-y-2">
-              <div className="h-2 w-full bg-slate-900 border border-white/5 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-cyan-400 to-indigo-500 shadow-[0_0_12px_#22d3ee] rounded-full transition-all duration-300"
-                  style={{ width: `${downloadProgress}%` }}
-                />
-              </div>
-              <div className="flex justify-between items-center text-[10px] text-slate-500 font-mono font-bold uppercase">
-                <span>{carLoadingLabel || "PROGRESS"}</span>
-                <span>
-                  {downloadedMB > 0 ? `${downloadedMB}MB / ${totalMB}MB ` : ""}({downloadProgress}%)
-                </span>
-              </div>
-            </div>
-          )}
+          </div>
         </div>
-      </div>
+      );
+    }
+
+    return (
+      <MultiplayerRaceLoadingScreen
+        roomCode={mp.room?.roomCode || mp.room?.code || ""}
+        players={mp.room?.players || []}
+        currentUserId={mp.playerId || RoomManager.getCurrentPlayerId() || ""}
+        isHost={mp.room?.hostId === (mp.playerId || RoomManager.getCurrentPlayerId())}
+        onRemovePlayer={handleRemovePlayer}
+        mapVerified={mapVerified}
+        mapDownloadProgress={mapDownloadProgress}
+        mapDownloadReady={mapDownloadReady}
+        carVerified={carVerified}
+        carDownloadProgress={carDownloadProgress}
+        carDownloadReady={carDownloadReady}
+        glbParsing={glbParsing}
+        glbParsed={glbParsed}
+        vehicleInitProgress={vehicleInitProgress}
+        vehicleInitReady={vehicleInitReady}
+        allPlayersReadyTriggered={allPlayersReadyTriggered}
+        onExit={handleExitConfirm}
+      />
     );
   }
 
@@ -915,8 +1187,31 @@ export const RaceScene: React.FC = () => {
         raceSettings={gameSettings}
       />
 
+      {/* Multiplayer Loader Overlay */}
+      {loadingMultiplayer && (
+        <MultiplayerRaceLoadingScreen
+          roomCode={mp.room?.roomCode || mp.room?.code || ""}
+          players={mp.room?.players || []}
+          currentUserId={mp.playerId || RoomManager.getCurrentPlayerId() || ""}
+          isHost={mp.room?.hostId === (mp.playerId || RoomManager.getCurrentPlayerId())}
+          onRemovePlayer={handleRemovePlayer}
+          mapVerified={mapVerified}
+          mapDownloadProgress={mapDownloadProgress}
+          mapDownloadReady={mapDownloadReady}
+          carVerified={carVerified}
+          carDownloadProgress={carDownloadProgress}
+          carDownloadReady={carDownloadReady}
+          glbParsing={glbParsing}
+          glbParsed={glbParsed}
+          vehicleInitProgress={vehicleInitProgress}
+          vehicleInitReady={vehicleInitReady}
+          allPlayersReadyTriggered={allPlayersReadyTriggered}
+          onExit={handleExitConfirm}
+        />
+      )}
+
       {/* Countdown overlay */}
-      {phase === "countdown" && (
+      {phase === "countdown" && !loadingMultiplayer && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-none z-30 font-sans">
           <div className="p-8 max-w-sm text-center">
             <span className="text-[10px] uppercase font-black text-cyan-400 tracking-widest block mb-1">
@@ -930,7 +1225,7 @@ export const RaceScene: React.FC = () => {
       )}
 
       {/* HUD and dashboard overlays */}
-      {(phase === "racing" || phase === "countdown") && currentPl && (
+      {(phase === "racing" || phase === "countdown") && !loadingMultiplayer && currentPl && (
         <HUD
           player={currentPl}
           opponents={currentOpponents}
@@ -948,7 +1243,7 @@ export const RaceScene: React.FC = () => {
       )}
 
       {/* Room multiplayer headers */}
-      {(phase === "racing" || phase === "countdown") && (
+      {(phase === "racing" || phase === "countdown") && !loadingMultiplayer && (
         <RoomCodeHUD
           roomCode={mp.room.code}
           playersCount={mp.room.players.length}

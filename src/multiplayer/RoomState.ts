@@ -26,6 +26,7 @@ export interface RoomPlayer {
 
   // Map download synchronizations
   mapReady?: boolean;
+  sceneReady?: boolean;
   downloadProgress?: number;
   downloadedMB?: number;
   totalMB?: number;
@@ -67,4 +68,5 @@ export interface RoomState {
   gameState: string;
   currentPlayers: number;
   isArchived?: boolean;
+  countdownStartTime?: any;
 }

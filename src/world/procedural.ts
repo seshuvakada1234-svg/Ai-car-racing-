@@ -282,6 +282,8 @@ export function createCarChassisGroup(
   const tlMat = new THREE.MeshBasicMaterial({ color: "#770010" });
 
   const isPlayer = c.id === "player";
+  const isGltfCar = c.carId === "ferrari" || c.carId === "bugatti" || c.carId === "porsche" || c.carId === "ferrari_purosangue" || c.carId === "bugatti_chiron_top_edition" || c.carId === "porsche_911_gt3";
+  const defaultVisibility = !isGltfCar;
 
   // Sleek, fully procedural aerodynamic vehicle shell using cylinder/torus/cone geometries only
   // Zero BoxGeometry or CapsuleGeometry placeholders are utilized, preserving the clean look.
@@ -291,7 +293,7 @@ export function createCarChassisGroup(
   bodyMesh.position.set(0, 0.45, 0);
   bodyMesh.castShadow = isPlayer;
   bodyMesh.receiveShadow = true;
-  bodyMesh.visible = true; // Enabled by default as fallback
+  bodyMesh.visible = defaultVisibility; // Enabled by default as fallback
   mainCarGroup.add(bodyMesh);
 
   const noseGeo = new THREE.CylinderGeometry(0.28, 0.68, 1.2, 10);
@@ -299,7 +301,7 @@ export function createCarChassisGroup(
   const noseMesh = new THREE.Mesh(noseGeo, paint);
   noseMesh.position.set(0, 0.35, 1.7);
   noseMesh.castShadow = isPlayer;
-  noseMesh.visible = true; // Enabled by default as fallback
+  noseMesh.visible = defaultVisibility; // Enabled by default as fallback
   mainCarGroup.add(noseMesh);
 
   // Cockpit canopy using squashed glass cylinder
@@ -318,14 +320,14 @@ export function createCarChassisGroup(
   canopyMesh.position.set(0, 0.68, -0.2);
   canopyMesh.scale.set(1.1, 0.62, 1.0);
   canopyMesh.castShadow = isPlayer;
-  canopyMesh.visible = true; // Enabled by default as fallback
+  canopyMesh.visible = defaultVisibility; // Enabled by default as fallback
   mainCarGroup.add(canopyMesh);
 
   // Wheel assembly structure: simple cylinder tires (strictly no Box/Capsule geometry)
   const spawnWheelAssembly = (wx: number, wy: number, wz: number, isLeft: boolean) => {
     const pivot = new THREE.Group();
     pivot.position.set(wx, wy, wz);
-    pivot.visible = true; // Spawn wheels visible
+    pivot.visible = defaultVisibility; // Spawn wheels visible
     mainCarGroup.add(pivot);
 
     const spinner = new THREE.Group();

@@ -36,6 +36,13 @@ export interface NormalPlayer {
   downloadedMB?: number;
   totalMB?: number;
 
+  // Car loading/validation fields
+  carReady?: boolean;
+  carProgress?: number;
+  glbParsing?: boolean;
+  vehicleInitialized?: boolean;
+  sceneReady?: boolean;
+
   // Track metrics
   position?: { x: number; y: number; z: number };
   velocity?: { x: number; y: number; z: number };
@@ -209,6 +216,26 @@ export class NormalRoomService {
   }
 
   /**
+   * Updates player's precise multi-stage loading status in Firestore
+   */
+  static async updatePlayerLoadingStatus(
+    code: string,
+    uid: string,
+    status: {
+      mapReady?: boolean;
+      mapProgress?: number;
+      carReady?: boolean;
+      carProgress?: number;
+      glbParsing?: boolean;
+      vehicleInitialized?: boolean;
+      ready?: boolean;
+      sceneReady?: boolean;
+    }
+  ): Promise<void> {
+    await RoomService.updatePlayerLoadingStatus(code, uid, status);
+  }
+
+  /**
    * Listen to changes in the players subcollection.
    */
   static listenToPlayers(code: string, callback: (players: NormalPlayer[]) => void) {
@@ -230,6 +257,7 @@ export class NormalRoomService {
           carColor: d.carColor,
           mapDownloaded: d.mapDownloaded ?? d.mapReady ?? false,
           mapReady: d.mapReady,
+          sceneReady: d.sceneReady ?? false,
           downloadProgress: d.downloadProgress,
           downloadedMB: d.downloadedMB,
           totalMB: d.totalMB,

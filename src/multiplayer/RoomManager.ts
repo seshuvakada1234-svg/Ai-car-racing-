@@ -83,6 +83,7 @@ export interface RoomData {
   countdown: number;
   createdAt: any;
   maxPlayers: number;
+  countdownStartTime?: any;
 }
 
 export class RoomManager {
@@ -194,6 +195,7 @@ export class RoomManager {
       speed: carState.speed,
       isDrifting: carState.isDrifting || false,
       currentLap: carState.currentLap || 1,
+      currentCheckpointIndex: carState.currentCheckpointIndex || 0,
       isFinished: carState.isFinished || false,
       totalDistanceTraveled: carState.totalDistanceTraveled || 0,
     });
@@ -318,6 +320,7 @@ export class RoomManager {
       countdown: room.countdown,
       createdAt: room.createdAt,
       maxPlayers: room.maxPlayers,
+      countdownStartTime: room.countdownStartTime,
     };
   }
 }

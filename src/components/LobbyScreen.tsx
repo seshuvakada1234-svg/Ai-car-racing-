@@ -34,12 +34,39 @@ export const LobbyScreen: React.FC<Props> = ({ onRaceStart, onLeave }) => {
     if (room) setLobby(LobbyManager.refreshSnapshot(room));
   }, [room]);
 
-  function copyCode() {
-    if (!roomCode) return;
-    navigator.clipboard.writeText(roomCode).then(() => {
+  function fallbackCopy(text: string) {
+    try {
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.style.top = "0";
+      textArea.style.left = "0";
+      textArea.style.position = "fixed";
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textArea);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+    } catch (fallbackErr) {
+      console.error("Fallback copy failed:", fallbackErr);
+    }
+  }
+
+  function copyCode() {
+    if (!roomCode) return;
+    try {
+      navigator.clipboard.writeText(roomCode).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }).catch((err) => {
+        console.warn("Clipboard writeText failed, trying fallback:", err);
+        fallbackCopy(roomCode);
+      });
+    } catch (err) {
+      console.warn("Clipboard writeText threw error, trying fallback:", err);
+      fallbackCopy(roomCode);
+    }
   }
 
   if (!room || !roomCode) {

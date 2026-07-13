@@ -620,6 +620,62 @@ export class RoomService {
   }
 
   /**
+   * Updates player's detailed multi-stage loading status
+   */
+  public static async updatePlayerLoadingStatus(
+    roomCode: string,
+    playerId: string,
+    status: {
+      mapReady?: boolean;
+      mapProgress?: number;
+      carReady?: boolean;
+      carProgress?: number;
+      glbParsing?: boolean;
+      vehicleInitialized?: boolean;
+      ready?: boolean;
+      sceneReady?: boolean;
+    }
+  ): Promise<void> {
+    const cleanCode = roomCode.toUpperCase().trim();
+    const roomRef = doc(db, "rooms", cleanCode);
+    const playerRef = doc(db, "rooms", cleanCode, "players", playerId);
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(roomRef);
+        if (!snap.exists()) return;
+
+        const room = snap.data() as RoomState;
+        const players = room.players || [];
+
+        const updatedPlayers = players.map((p) => {
+          if (p.uid === playerId || p.id === playerId) {
+            return {
+              ...p,
+              ...status,
+              isReady: status.ready !== undefined ? status.ready : (p.isReady ?? false),
+            };
+          }
+          return p;
+        });
+
+        transaction.update(roomRef, {
+          players: updatedPlayers,
+          updatedAt: serverTimestamp(),
+        });
+
+        transaction.set(playerRef, {
+          ...status,
+          isReady: status.ready !== undefined ? status.ready : true,
+        }, { merge: true });
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `rooms/${cleanCode}/players/${playerId}`);
+      throw e;
+    }
+  }
+
+  /**
    * Subscribes to real-time updates of the main room doc.
    */
   public static listenToRoom(
@@ -673,6 +729,7 @@ export class RoomService {
       speed: number;
       isDrifting: boolean;
       currentLap: number;
+      currentCheckpointIndex?: number;
       isFinished: boolean;
       totalDistanceTraveled: number;
     },
