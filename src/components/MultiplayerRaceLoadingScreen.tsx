@@ -34,6 +34,11 @@ interface MultiplayerRaceLoadingScreenProps {
   
   allPlayersReadyTriggered: boolean;
   onExit: () => void;
+
+  // Real-time Countdown sync
+  countdownRemaining?: number;
+  countdownMsg?: string;
+  countdownStatus?: string;
 }
 
 export const MultiplayerRaceLoadingScreen: React.FC<MultiplayerRaceLoadingScreenProps> = ({
@@ -56,6 +61,10 @@ export const MultiplayerRaceLoadingScreen: React.FC<MultiplayerRaceLoadingScreen
   
   allPlayersReadyTriggered,
   onExit,
+
+  countdownRemaining,
+  countdownMsg,
+  countdownStatus,
 }) => {
   const [dots, setDots] = useState("");
 
@@ -323,7 +332,25 @@ export const MultiplayerRaceLoadingScreen: React.FC<MultiplayerRaceLoadingScreen
 
         {/* Global Loading Bottom Status Bar */}
         <AnimatePresence mode="wait">
-          {allPlayersReadyTriggered ? (
+          {countdownStatus === "countdown" && countdownRemaining !== undefined ? (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="flex flex-col items-center justify-center p-4 bg-pink-500/10 border border-pink-500/30 rounded-xl text-center space-y-1"
+            >
+              <div className="flex items-center gap-2 text-pink-400 font-bold text-[10px] uppercase tracking-widest font-mono">
+                <span className="h-2 w-2 rounded-full bg-pink-500 animate-ping" />
+                COUNTDOWN IN PROGRESS
+              </div>
+              <h3 className="text-4xl font-black font-mono tracking-wider text-pink-500">
+                {countdownRemaining > 0 ? `${countdownRemaining}s` : "GO!"}
+              </h3>
+              <p className="text-[9px] text-slate-400 font-mono uppercase tracking-widest">
+                Warming virtual engines. Race starts immediately upon calibration completion!
+              </p>
+            </motion.div>
+          ) : allPlayersReadyTriggered ? (
             <motion.div 
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}

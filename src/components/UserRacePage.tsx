@@ -177,6 +177,7 @@ export const RaceScene: React.FC = () => {
 
   const lastTimeRef = useRef<number>(Date.now());
   const countdownTimerRef = useRef<number | null>(null);
+  const remotePlayersMapRef = useRef<Map<string, any>>(new Map());
 
   // Clean initialization values on mount or room change
   useEffect(() => {
@@ -840,11 +841,6 @@ export const RaceScene: React.FC = () => {
       startCountdown(mp.room.roomCode).catch((err) => {
         console.error("Failed to update room status to countdown:", err);
       });
-    } else if (mp.room.status === "countdown" && !everyoneReady) {
-      console.log("[Host Action] Someone refreshed or is loading during countdown! Reverting room status back to racing loading phase.");
-      NormalRoomService.setRoomStatus(mp.room.roomCode, "racing").catch((err) => {
-        console.error("Failed to revert room status to racing:", err);
-      });
     }
   }, [mp.room?.players, mp.room?.status, mp.room?.raceStarted, mp.room?.roomCode, mp.room?.hostId, mp.playerId]);
 
@@ -867,15 +863,14 @@ export const RaceScene: React.FC = () => {
         setLoadingMultiplayer(false);
         setCountdownStarted(true);
         setPhase("countdown");
+      }
 
-        const startTime = mp.room.countdownStartTime;
-        if (!startTime) {
-          setCountdown(60);
-          setCountdownMsg("60");
-          setCountdownLabel("Match begins in");
-          return;
-        }
-
+      const startTime = mp.room.countdownStartTime;
+      if (!startTime) {
+        setCountdown(60);
+        setCountdownMsg("60");
+        setCountdownLabel("Match begins in");
+      } else {
         const startTimeMillis = startTime.toMillis ? startTime.toMillis() : new Date(startTime).getTime();
 
         const tick = () => {
@@ -892,9 +887,11 @@ export const RaceScene: React.FC = () => {
             setCountdownMsg("GO!");
             setCountdownLabel("Green light");
           } else {
-            setPhase("racing");
-            setCountdownStarted(false);
-            lastTimeRef.current = Date.now();
+            if (vehicleInitReady) {
+              setPhase("racing");
+              setCountdownStarted(false);
+              lastTimeRef.current = Date.now();
+            }
 
             // Host only: update room status to racing in Firestore so spectators/broadcasters can follow
             const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
@@ -962,6 +959,32 @@ export const RaceScene: React.FC = () => {
     return () => cancelAnimationFrame(frameId);
   }, [phase, isPaused]);
 
+  // Subscribe to real-time player subcollection coordinates for synchronization
+  useEffect(() => {
+    if (!mp.room?.roomCode) return;
+    const unsub = NormalRoomService.listenToPlayers(mp.room.roomCode, (playersList) => {
+      const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
+      playersList.forEach((p) => {
+        // Only track remote players in this map
+        if (p.uid === activePlayerId) return;
+        remotePlayersMapRef.current.set(p.uid, p);
+      });
+
+      // Clean up any players no longer present in the room
+      const activeUids = new Set(playersList.map((p) => p.uid));
+      for (const [uid] of remotePlayersMapRef.current) {
+        if (!activeUids.has(uid)) {
+          remotePlayersMapRef.current.delete(uid);
+        }
+      }
+    });
+
+    return () => {
+      unsub();
+      remotePlayersMapRef.current.clear();
+    };
+  }, [mp.room?.roomCode, mp.playerId]);
+
   // Callback triggered inside the canvas animation frames
   const handleTickUpdate = (updatedCars: CarState[]) => {
     if (!mp.room) return;
@@ -994,7 +1017,11 @@ export const RaceScene: React.FC = () => {
       }
 
       const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
-      const netPlayer = mp.room?.players?.find((p: any) => p.id === netId || p.uid === netId);
+      let netPlayer = remotePlayersMapRef.current.get(netId);
+      if (!netPlayer) {
+        netPlayer = mp.room?.players?.find((p: any) => p.id === netId || p.uid === netId);
+      }
+
       if (netPlayer) {
         const rawCid = getCarIdString(netPlayer.carId);
         car.carId = rawCid.toLowerCase().includes("porsche")
@@ -1141,6 +1168,9 @@ export const RaceScene: React.FC = () => {
         vehicleInitReady={vehicleInitReady}
         allPlayersReadyTriggered={allPlayersReadyTriggered}
         onExit={handleExitConfirm}
+        countdownRemaining={mp.room?.status === "countdown" ? countdown : undefined}
+        countdownMsg={mp.room?.status === "countdown" ? countdownMsg : undefined}
+        countdownStatus={mp.room?.status}
       />
     );
   }
@@ -1207,6 +1237,9 @@ export const RaceScene: React.FC = () => {
           vehicleInitReady={vehicleInitReady}
           allPlayersReadyTriggered={allPlayersReadyTriggered}
           onExit={handleExitConfirm}
+          countdownRemaining={mp.room?.status === "countdown" ? countdown : undefined}
+          countdownMsg={mp.room?.status === "countdown" ? countdownMsg : undefined}
+          countdownStatus={mp.room?.status}
         />
       )}
 

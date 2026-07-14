@@ -111,7 +111,8 @@ export function useMultiplayer(roomOverride?: RoomData | null): UseMultiplayerRe
 
   const sendLocalCar = useCallback(async (car: any) => {
     const now = Date.now();
-    if (now - lastLocalSend < 150) return;
+    // Throttle to 40ms (approx. 25 updates per second) for smooth real-time syncing
+    if (now - lastLocalSend < 40) return;
     lastLocalSend = now;
 
     const code = RoomManager.getCurrentCode();

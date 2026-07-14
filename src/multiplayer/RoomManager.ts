@@ -192,12 +192,22 @@ export class RoomManager {
       position: { x: carState.position.x, y: carState.position.y, z: carState.position.z },
       velocity: { x: carState.velocity.x, y: carState.velocity.y, z: carState.velocity.z },
       angle: carState.angle,
+      rotation: carState.angle,
       speed: carState.speed,
+      steering: carState.steerValue ?? 0,
+      steerValue: carState.steerValue ?? 0,
+      wheelRotation: carState.wheelspinAngle ?? 0,
+      nitro: carState.isNitroActive || false,
+      isNitroActive: carState.isNitroActive || false,
+      drift: carState.isDrifting || false,
       isDrifting: carState.isDrifting || false,
+      lap: carState.currentLap || 1,
       currentLap: carState.currentLap || 1,
+      checkpoint: carState.currentCheckpointIndex || 0,
       currentCheckpointIndex: carState.currentCheckpointIndex || 0,
       isFinished: carState.isFinished || false,
       totalDistanceTraveled: carState.totalDistanceTraveled || 0,
+      timestamp: Date.now(),
     });
   }
 

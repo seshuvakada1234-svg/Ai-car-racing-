@@ -83,9 +83,16 @@ export class VehicleRenderer {
     if (carData.tailLightMat) this.tailLightMatMap.set(carState.id, carData.tailLightMat);
     if (carData.paintMat) this.paintMatMap.set(carState.id, carData.paintMat);
 
+    const carId = carState.carId || "ferrari";
+    const isGltfCar = carId === "ferrari" || carId === "bugatti" || carId === "porsche" || 
+                      carId === "ferrari_purosangue" || carId === "bugatti_chiron_top_edition" || carId === "porsche_911_gt3" ||
+                      carId.toLowerCase().includes("ferrari") || carId.toLowerCase().includes("bugatti") || carId.toLowerCase().includes("porsche");
+
     if (carState.id === "player") {
-      (window as any).playerCarAddedToScene = true;
-      (window as any).carLoaded = true;
+      if (!isGltfCar) {
+        (window as any).playerCarAddedToScene = true;
+        (window as any).carLoaded = true;
+      }
     }
   }
 
@@ -185,6 +192,12 @@ export class VehicleRenderer {
           this.carSpinnersMap.get(c.id)?.forEach((s) => {
             s.visible = false;
           });
+
+          if (c.id === "player") {
+            (window as any).playerCarAddedToScene = true;
+            (window as any).carLoaded = true;
+            console.log("[VehicleRenderer] Player GLTF model loaded and attached! Setting window flags.");
+          }
         }
       }
 

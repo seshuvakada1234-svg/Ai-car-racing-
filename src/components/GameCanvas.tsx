@@ -678,6 +678,38 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         dragonWorld.update(elapsedSec, trackHelper, rank, isFinished, activeWeather);
       }
 
+      // Interpolate remote players' cars towards their network targets (smooth movement)
+      currentCars.forEach((c) => {
+        if (c.id !== "player" && !c.isAI) {
+          if (c.targetPosition) {
+            // Apply frame-rate independent lerp
+            const lerpFactor = 1 - Math.exp(-elapsedSec * 12); // ~83ms time constant for responsive, smooth tracking
+            c.position.x += (c.targetPosition.x - c.position.x) * lerpFactor;
+            c.position.y += (c.targetPosition.y - c.position.y) * lerpFactor;
+            c.position.z += (c.targetPosition.z - c.position.z) * lerpFactor;
+
+            if (c.targetVelocity) {
+              c.velocity.x += (c.targetVelocity.x - c.velocity.x) * lerpFactor;
+              c.velocity.y += (c.targetVelocity.y - c.velocity.y) * lerpFactor;
+              c.velocity.z += (c.targetVelocity.z - c.velocity.z) * lerpFactor;
+            }
+          }
+
+          if (typeof c.targetAngle === "number") {
+            // Find shortest angular difference for slerp-like angle transition (avoids 360 flip-snaps)
+            let diff = c.targetAngle - c.angle;
+            diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+            const lerpFactor = 1 - Math.exp(-elapsedSec * 12);
+            c.angle += diff * lerpFactor;
+          }
+
+          if (typeof c.targetSpeed === "number") {
+            const lerpFactor = 1 - Math.exp(-elapsedSec * 12);
+            c.speed += (c.targetSpeed - c.speed) * lerpFactor;
+          }
+        }
+      });
+
       // Animate Vehicles and Wheels
       vehicleRenderer.update(
         currentCars,

@@ -14,6 +14,8 @@ import { FpsCapabilityMonitor } from "../systems/FpsCapabilityMonitor";
 import { PerfDebugOverlay } from "./PerfDebugOverlay";
 import { TrackDebugOverlay } from "./TrackDebugOverlay";
 import { VehiclePhysicsDebugOverlay } from "./VehiclePhysicsDebugOverlay";
+import { db } from "../lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
 
 import {
   Pause,
@@ -76,6 +78,51 @@ export const HUD: React.FC<HUDProps> = ({
 
   const [notif, setNotif] = useState<string | null>(null);
   const [graphicsOpen, setGraphicsOpen] = useState(false);
+
+  // Network Latency RTT Monitor State and Hook
+  const [rtt, setRtt] = useState<number | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    let timerId: any = null;
+
+    const measureRtt = async () => {
+      const startTime = performance.now();
+      try {
+        const pingId = `rtt_ping_${Math.random().toString(36).substring(2, 10)}`;
+        const pingRef = doc(db, "rooms", pingId);
+        await getDoc(pingRef);
+        
+        const endTime = performance.now();
+        const latency = Math.round(endTime - startTime);
+        if (active) {
+          setRtt(latency);
+        }
+      } catch (err) {
+        console.warn("Firestore RTT ping failed, falling back to basic timing measure:", err);
+        const endTime = performance.now();
+        const latency = Math.round(endTime - startTime);
+        if (active) {
+          setRtt(latency);
+        }
+      }
+    };
+
+    measureRtt();
+    timerId = setInterval(measureRtt, 3000);
+
+    return () => {
+      active = false;
+      if (timerId) clearInterval(timerId);
+    };
+  }, []);
+
+  const getLatencyColor = (latency: number | null) => {
+    if (latency === null) return "text-slate-500";
+    if (latency < 100) return "text-emerald-450";
+    if (latency < 220) return "text-amber-400";
+    return "text-rose-500 animate-pulse font-bold";
+  };
 
   // Camera cycles through chase / far chase / orbit / driver view. Persisted in localStorage.
   type CamMode = "CHASE" | "HIGH_CHASE" | "ORBIT" | "COCKPIT";
@@ -687,6 +734,22 @@ export const HUD: React.FC<HUDProps> = ({
           </span>
         </div>
 
+        {/* Mobile Network RTT display */}
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(env(safe-area-inset-top) + 54px)",
+            left: "calc(env(safe-area-inset-left) + 12px)",
+          }}
+          className="bg-slate-950/80 backdrop-blur-md border border-slate-800/60 p-1.5 px-2.5 rounded-xl pointer-events-auto flex items-center space-x-1.5 shadow-xl select-none"
+        >
+          <Activity className="w-3.5 h-3.5 text-emerald-450 animate-pulse" />
+          <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">RTT</span>
+          <span className={`font-mono text-[9px] font-black ${getLatencyColor(rtt)}`}>
+            {rtt !== null ? `${rtt} ms` : "..."}
+          </span>
+        </div>
+
         {/* Top Right: Speed */}
         <div
           style={{
@@ -775,6 +838,17 @@ export const HUD: React.FC<HUDProps> = ({
                 <span>Timer</span>
               </span>
               <span className="font-mono text-base font-black text-sky-300">{formatTime(elapsedTime)}</span>
+            </div>
+
+            {/* Network Latency RTT Monitor */}
+            <div className="flex justify-between items-center pt-2 border-t border-slate-800/40">
+              <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest flex items-center">
+                <Activity className="w-3.5 h-3.5 mr-1 text-emerald-450 animate-pulse" />
+                <span>Net Latency</span>
+              </span>
+              <span className={`font-mono text-xs font-black ${getLatencyColor(rtt)}`}>
+                {rtt !== null ? `${rtt} ms` : "..."}
+              </span>
             </div>
           </div>
 

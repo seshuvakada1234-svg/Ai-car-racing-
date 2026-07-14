@@ -692,6 +692,18 @@ export class RoomService {
         if (snap.exists()) {
           const data = snap.data() as any;
           
+          // Calculate/estimate clock offset using updatedAt from server to keep countdowns perfectly in sync
+          if (data.updatedAt && snap.metadata.hasPendingWrites === false) {
+            const serverMillis = data.updatedAt.toMillis ? data.updatedAt.toMillis() : new Date(data.updatedAt).getTime();
+            const localMillis = Date.now();
+            const offset = serverMillis - localMillis;
+            import("./multiplayerRaceStartSync").then(({ setEstimatedServerTimeOffset }) => {
+              setEstimatedServerTimeOffset(offset);
+            }).catch((err) => {
+              console.warn("Failed to set estimated server time offset dynamically", err);
+            });
+          }
+
           // Normalize selectedCar and mapType if they are stored as objects
           const selectedCarId = data.selectedCar && typeof data.selectedCar === "object" ? data.selectedCar.id : (data.selectedCar || "ferrari");
           const mapId = data.selectedMap && typeof data.selectedMap === "object" ? data.selectedMap.id : (data.mapType || "map1");
@@ -722,17 +734,7 @@ export class RoomService {
   public static async updatePlayerPosition(
     code: string,
     uid: string,
-    coords: {
-      position: { x: number; y: number; z: number };
-      velocity: { x: number; y: number; z: number };
-      angle: number;
-      speed: number;
-      isDrifting: boolean;
-      currentLap: number;
-      currentCheckpointIndex?: number;
-      isFinished: boolean;
-      totalDistanceTraveled: number;
-    },
+    coords: any,
   ): Promise<void> {
     const cleanCode = code.toUpperCase().trim();
     const playerRef = doc(db, "rooms", cleanCode, "players", uid);
