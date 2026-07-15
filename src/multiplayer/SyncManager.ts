@@ -1,6 +1,6 @@
 import { RoomData, RoomManager } from "./RoomManager";
 
-type SyncCallback = (room: RoomData) => void;
+type SyncCallback = (room: RoomData | null) => void;
 type StatusCallback = (status: RoomData["status"]) => void;
 
 export class SyncManager {
@@ -15,7 +15,7 @@ export class SyncManager {
     const detach = RoomManager.listenToRoom(roomCode, (room) => {
       onRoomChange(room);
 
-      if (onStatusChange && room.status !== SyncManager.lastStatus) {
+      if (room && onStatusChange && room.status !== SyncManager.lastStatus) {
         SyncManager.lastStatus = room.status;
         onStatusChange(room.status);
       }

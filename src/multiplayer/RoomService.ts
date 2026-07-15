@@ -352,45 +352,69 @@ export class RoomService {
         const updatedSelectedCars = { ...room.selectedCars };
         delete updatedSelectedCars[uid];
 
-        const beforeStart = room.status === "waiting" || room.status === "countdown" || room.status === "starting" || room.phase === "waiting";
+        const originalCount = players.length;
+
+        // Rule 1: If the room has ONLY 2 players (Host + Player2) or less:
+        // If either player leaves:
+        // - Remove that player from Firestore.
+        // - Delete the room document.
+        // - Stop all room listeners.
+        // - Return the remaining player to the Garage.
+        // - Show: "The room has been closed because there are no opponents remaining."
+        if (originalCount <= 2) {
+          transaction.delete(roomRef);
+          for (const p of players) {
+            const pRef = doc(db, "rooms", cleanCode, "players", p.uid);
+            transaction.delete(pRef);
+          }
+          return;
+        }
+
+        // Rule 2 & 3: If the room has 3 or more players:
+        // - Remove only the leaving player from Firestore.
+        // - Keep the room alive.
+        // - Update Firestore immediately (players[], currentPlayers, hostId, updatedAt).
+        // - If the HOST leaves, choose the oldest remaining player (first player who joined) as the new host.
+        //   Update: hostId = newHostId, show "You are now the Room Host" (handled in client component on snapshot update).
+        let nextHostId = room.hostId;
+        let nextHostName = room.hostName || room.ownerName || "Host";
 
         if (room.hostId === uid || room.ownerUid === uid) {
-          if (beforeStart) {
-            // Delete the room automatically as required by Requirement 6
-            transaction.delete(roomRef);
-            for (const p of players) {
-              const pRef = doc(db, "rooms", cleanCode, "players", p.uid);
-              transaction.delete(pRef);
-            }
+          // Host is leaving! Transfer host role to the oldest remaining player.
+          const sortedRemaining = [...updatedPlayers].sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
+          if (sortedRemaining.length > 0) {
+            const newHost = sortedRemaining[0];
+            nextHostId = newHost.uid;
+            nextHostName = newHost.playerName;
+
+            // Update the new host's details in players array to have isHost = true
+            const finalPlayers = updatedPlayers.map((p) => {
+              if (p.uid === newHost.uid) {
+                return { ...p, isHost: true, ready: true, isReady: true };
+              }
+              return p;
+            });
+
+            transaction.update(roomRef, {
+              hostId: nextHostId,
+              ownerUid: nextHostId, // compatibility
+              hostName: nextHostName,
+              ownerName: nextHostName, // compatibility
+              players: finalPlayers,
+              selectedCars: updatedSelectedCars,
+              currentPlayers: finalPlayers.length,
+              updatedAt: serverTimestamp(),
+            });
+
+            // Also update the subcollection player document for the new host
+            const newHostRef = doc(db, "rooms", cleanCode, "players", newHost.uid);
+            transaction.update(newHostRef, { isHost: true, ready: true, isReady: true });
           } else {
-            // If the race already started, transfer host if there are remaining players
-            if (updatedPlayers.length > 0) {
-              const newHost = updatedPlayers[0];
-              newHost.isHost = true;
-              newHost.ready = true;
-              if (newHost.isReady !== undefined) newHost.isReady = true;
-
-              const finalPlayers = updatedPlayers.map((p) => p.uid === newHost.uid ? newHost : p);
-
-              transaction.update(roomRef, {
-                hostId: newHost.uid,
-                ownerUid: newHost.uid, // compatibility
-                hostName: newHost.playerName,
-                ownerName: newHost.playerName, // compatibility
-                players: finalPlayers,
-                selectedCars: updatedSelectedCars,
-                currentPlayers: finalPlayers.length,
-                updatedAt: serverTimestamp(),
-              });
-
-              const newHostRef = doc(db, "rooms", cleanCode, "players", newHost.uid);
-              transaction.update(newHostRef, { isHost: true, ready: true, isReady: true });
-            } else {
-              transaction.delete(roomRef);
-            }
+            // No players remaining, delete room
+            transaction.delete(roomRef);
           }
         } else {
-          // Normal player leaving
+          // A non-host player is leaving!
           transaction.update(roomRef, {
             players: updatedPlayers,
             selectedCars: updatedSelectedCars,

@@ -33,6 +33,7 @@ import {
   LogOut,
 } from "lucide-react";
 import { selectRandomPlayerCar, setPlayerSelectedModelKey } from "./world/procedural";
+import { Toaster } from "sonner";
 
 // Multiplayer integrations
 import { useMultiplayer } from "./hooks/useMultiplayer";
@@ -1259,6 +1260,7 @@ function AppBody() {
           }
         />
       </Routes>
+      <Toaster position="top-center" theme="dark" richColors closeButton={false} />
     </OrientationForceLandscape>
   );
 }

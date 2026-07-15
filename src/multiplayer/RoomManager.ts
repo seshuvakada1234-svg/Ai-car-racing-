@@ -154,11 +154,13 @@ export class RoomManager {
     });
   }
 
-  static listenToRoom(code: string, onChange: (room: RoomData) => void): () => void {
+  static listenToRoom(code: string, onChange: (room: RoomData | null) => void): () => void {
     const cleanCode = code.toUpperCase().trim();
     const unsub = RoomService.listenToRoom(cleanCode, (room) => {
       if (room) {
         onChange(this.mapToRoomData(room));
+      } else {
+        onChange(null);
       }
     });
     return unsub;

@@ -6,6 +6,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { useMultiplayer } from "../hooks/useMultiplayer";
 import { RoomManager } from "../multiplayer/RoomManager";
 import { TrackGeometryHelper } from "../utils/track";
@@ -154,6 +155,36 @@ export const RaceScene: React.FC = () => {
       navigate("/rooms");
     }
   };
+
+  // Track if local player became the Host during the active race
+  const prevHostIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!mp.room) return;
+    const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
+    if (!activePlayerId) return;
+
+    if (prevHostIdRef.current !== null && prevHostIdRef.current !== mp.room.hostId) {
+      if (mp.room.hostId === activePlayerId) {
+        toast.success("You are now the Room Host.", {
+          position: "top-center"
+        });
+      }
+    }
+    prevHostIdRef.current = mp.room.hostId;
+  }, [mp.room?.hostId, mp.playerId]);
+
+  // Automatically return to Garage if the room is canceled/deleted during the active race
+  useEffect(() => {
+    if (!mp.isConnecting && !mp.room) {
+      if (isExiting) {
+        // Voluntarily leaving, do not show opponents remaining toast
+      } else {
+        console.log("Room deleted or canceled during active race. Returning to garage.");
+        sessionStorage.setItem("room_closed_no_opponents", "true");
+        navigate("/garage");
+      }
+    }
+  }, [mp.room, mp.isConnecting, isExiting, navigate]);
 
   // Core Game State
   const [trackHelper, setTrackHelper] = useState<TrackGeometryHelper | null>(null);
@@ -1004,7 +1035,15 @@ export const RaceScene: React.FC = () => {
     }
 
     // Unpack remote cars
-    const nextCars = updatedCars.map((car) => {
+    const activeUids = new Set(mp.room?.players?.map((p: any) => p.uid || p.id) || []);
+    const filteredCars = updatedCars.filter((car) => {
+      if (car.id === "player") return true;
+      if (car.isAI) return true;
+      const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
+      return activeUids.has(netId);
+    });
+
+    const nextCars = filteredCars.map((car) => {
       if (car.id === "player") {
         const myPl = mp.room?.players?.find((p: any) => p.uid === activePlayerId || p.id === activePlayerId);
         const rawCid = getCarIdString(myPl?.carId || car.carId);

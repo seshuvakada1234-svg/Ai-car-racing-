@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { toast } from "sonner";
 import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { handleFirestoreError, OperationType } from "../lib/firestoreError";
@@ -405,10 +406,33 @@ export const WaitingLobbyPage: React.FC = () => {
   // 2. Automatically return to Garage if the room is canceled/deleted
   useEffect(() => {
     if (!loading && !room) {
-      console.log("Room deleted or canceled. Returning to garage.");
+      const voluntary = sessionStorage.getItem("voluntarily_leaving_room");
+      if (voluntary) {
+        sessionStorage.removeItem("voluntarily_leaving_room");
+      } else {
+        console.log("Room deleted or canceled. Returning to garage.");
+        sessionStorage.setItem("room_closed_no_opponents", "true");
+      }
       navigate("/garage");
     }
   }, [room, loading, navigate]);
+
+  // Track if local player became the Host during waiting lobby
+  const prevHostIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!room) return;
+    const activePlayerId = profile?.uid || RoomManager.getCurrentPlayerId();
+    if (!activePlayerId) return;
+
+    if (prevHostIdRef.current !== null && prevHostIdRef.current !== room.hostId) {
+      if (room.hostId === activePlayerId) {
+        toast.success("You are now the Room Host.", {
+          position: "top-center"
+        });
+      }
+    }
+    prevHostIdRef.current = room.hostId || null;
+  }, [room?.hostId, profile?.uid]);
 
   // 3. Auto-Join Trigger
   useEffect(() => {
@@ -519,6 +543,7 @@ export const WaitingLobbyPage: React.FC = () => {
   const handleLeave = async () => {
     if (!profile) return;
     try {
+      sessionStorage.setItem("voluntarily_leaving_room", "true");
       await NormalRoomService.leaveOrCancelRoom(normalizedCode, profile.uid);
       navigate("/garage");
     } catch (err) {

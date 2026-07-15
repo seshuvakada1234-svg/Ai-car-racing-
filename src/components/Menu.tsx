@@ -149,6 +149,21 @@ export const Menu: React.FC<MenuProps> = ({ onStartGame, onCreateRoom, onJoinRoo
   const [playerName, setPlayerName] = useState(profile?.name || "Speedster");
 
   useEffect(() => {
+    const closedNoOpponents = sessionStorage.getItem("room_closed_no_opponents");
+    if (closedNoOpponents) {
+      sessionStorage.removeItem("room_closed_no_opponents");
+      import("sonner").then(({ toast }) => {
+        toast.error("The room has been closed because there are no opponents remaining.", {
+          position: "top-center",
+          duration: 5000,
+        });
+      }).catch((err) => {
+        console.warn("Failed to load sonner toast dynamically", err);
+      });
+    }
+  }, []);
+
+  useEffect(() => {
     const unsub = onSnapshot(collection(db, "maps"), (snap) => {
       const dbMaps = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       const activeDbMaps = dbMaps.filter((m: any) => m.status !== "Disabled");
