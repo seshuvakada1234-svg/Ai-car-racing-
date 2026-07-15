@@ -111,13 +111,27 @@ export function useMultiplayer(roomOverride?: RoomData | null): UseMultiplayerRe
 
   const sendLocalCar = useCallback(async (car: any) => {
     const now = Date.now();
-    // Throttle to 40ms (approx. 25 updates per second) for smooth real-time syncing
-    if (now - lastLocalSend < 40) return;
+    // Throttle to 50ms (exactly 20 updates per second) as requested
+    if (now - lastLocalSend < 50) return;
     lastLocalSend = now;
 
     const code = RoomManager.getCurrentCode();
     const pid = RoomManager.getCurrentPlayerId();
     if (!code || !pid) return;
+
+    // Log telemetry before send
+    const pos = car.position ? { x: car.position.x, y: car.position.y, z: car.position.z } : null;
+    const rot = car.angle ?? 0;
+    const sp = car.speed ?? 0;
+    console.log(
+      `[SEND]\n` +
+      `playerId: ${pid}\n` +
+      `roomCode: ${code}\n` +
+      `position: ${JSON.stringify(pos)}\n` +
+      `rotation: ${rot}\n` +
+      `speed: ${sp}\n` +
+      `timestamp: ${now}`
+    );
 
     try {
       await RoomManager.updateCurrentPlayerPosition(code, pid, car);

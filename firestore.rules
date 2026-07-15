@@ -118,11 +118,8 @@ service cloud.firestore {
       // Any authenticated racer can read, list, create, or update room matchmaking staging states
       allow get, list, create, update: if isSignedIn();
 
-      // Closing/purging a room is reserved for the Host or Admin
-      allow delete: if isSignedIn() && (
-        request.auth.uid == resource.data.hostId || 
-        isAdmin()
-      );
+      // Closing/purging a room can be done by any signed-in user to handle room teardown when either player leaves
+      allow delete: if isSignedIn();
 
       // Dedicated rules for players subcollection
       match /players/{uid} {

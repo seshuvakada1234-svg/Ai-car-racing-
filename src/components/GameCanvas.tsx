@@ -682,30 +682,42 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       currentCars.forEach((c) => {
         if (c.id !== "player" && !c.isAI) {
           if (c.targetPosition) {
-            // Apply frame-rate independent lerp
-            const lerpFactor = 1 - Math.exp(-elapsedSec * 12); // ~83ms time constant for responsive, smooth tracking
-            c.position.x += (c.targetPosition.x - c.position.x) * lerpFactor;
-            c.position.y += (c.targetPosition.y - c.position.y) * lerpFactor;
-            c.position.z += (c.targetPosition.z - c.position.z) * lerpFactor;
+            // User requested: position = lerp(current, target, 0.15)
+            c.position.x += (c.targetPosition.x - c.position.x) * 0.15;
+            c.position.y += (c.targetPosition.y - c.position.y) * 0.15;
+            c.position.z += (c.targetPosition.z - c.position.z) * 0.15;
 
             if (c.targetVelocity) {
-              c.velocity.x += (c.targetVelocity.x - c.velocity.x) * lerpFactor;
-              c.velocity.y += (c.targetVelocity.y - c.velocity.y) * lerpFactor;
-              c.velocity.z += (c.targetVelocity.z - c.velocity.z) * lerpFactor;
+              c.velocity.x += (c.targetVelocity.x - c.velocity.x) * 0.15;
+              c.velocity.y += (c.targetVelocity.y - c.velocity.y) * 0.15;
+              c.velocity.z += (c.targetVelocity.z - c.velocity.z) * 0.15;
             }
           }
 
           if (typeof c.targetAngle === "number") {
             // Find shortest angular difference for slerp-like angle transition (avoids 360 flip-snaps)
+            // User requested: rotation = slerp(current, target, 0.15)
             let diff = c.targetAngle - c.angle;
             diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-            const lerpFactor = 1 - Math.exp(-elapsedSec * 12);
-            c.angle += diff * lerpFactor;
+            c.angle += diff * 0.15;
           }
 
           if (typeof c.targetSpeed === "number") {
-            const lerpFactor = 1 - Math.exp(-elapsedSec * 12);
-            c.speed += (c.targetSpeed - c.speed) * lerpFactor;
+            c.speed += (c.targetSpeed - c.speed) * 0.15;
+          }
+
+          // Apply physical steering, wheel rotation, nitro and drift targets every render frame
+          if (typeof c.targetSteerValue === "number") {
+            c.steerValue = c.targetSteerValue;
+          }
+          if (typeof c.targetWheelRotation === "number") {
+            c.wheelspinAngle = c.targetWheelRotation;
+          }
+          if (typeof c.targetIsNitroActive === "boolean") {
+            c.isNitroActive = c.targetIsNitroActive;
+          }
+          if (typeof c.targetIsDrifting === "boolean") {
+            c.isDrifting = c.targetIsDrifting;
           }
         }
       });

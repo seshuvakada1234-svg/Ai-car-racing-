@@ -47,7 +47,14 @@ export interface NormalPlayer {
   position?: { x: number; y: number; z: number };
   velocity?: { x: number; y: number; z: number };
   angle?: number;
+  rotation?: number;
   speed?: number;
+  steering?: number;
+  steerValue?: number;
+  wheelRotation?: number;
+  nitro?: boolean;
+  isNitroActive?: boolean;
+  drift?: boolean;
   isDrifting?: boolean;
   currentLap?: number;
   isFinished?: boolean;
@@ -245,6 +252,24 @@ export class NormalRoomService {
       const list: NormalPlayer[] = [];
       snap.forEach((doc) => {
         const d = doc.data();
+
+        // Print RECEIVE log on every incoming packet arrival if it contains active coordinates
+        const hasValidCoords = d.position && 
+                               typeof d.position === "object" && 
+                               typeof d.position.x === "number" && 
+                               typeof d.position.y === "number" && 
+                               typeof d.position.z === "number";
+        if (hasValidCoords) {
+          console.log(
+            `[RECEIVE]\n` +
+            `playerId: ${doc.id}\n` +
+            `position: ${JSON.stringify(d.position)}\n` +
+            `rotation: ${d.angle ?? d.rotation ?? 0}\n` +
+            `speed: ${d.speed ?? 0}\n` +
+            `timestamp: ${d.timestamp || Date.now()}`
+          );
+        }
+
         list.push({
           uid: d.uid || doc.id,
           name: d.name || d.playerName || d.nickname || "Driver",
@@ -264,7 +289,14 @@ export class NormalRoomService {
           position: d.position,
           velocity: d.velocity,
           angle: d.angle,
+          rotation: d.rotation,
           speed: d.speed,
+          steering: d.steering,
+          steerValue: d.steerValue,
+          wheelRotation: d.wheelRotation,
+          nitro: d.nitro,
+          isNitroActive: d.isNitroActive,
+          drift: d.drift,
           isDrifting: d.isDrifting,
           currentLap: d.currentLap,
           isFinished: d.isFinished,

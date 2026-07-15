@@ -36,8 +36,19 @@ export class SyncManager {
   static unpackCarState(car: any, netPlayer: any): void {
     if (!netPlayer) return;
 
+    // Validate that position is a valid coordinates object before unpacking to prevent NaN corruption from initial grid numbers
+    const hasValidCoords = netPlayer.position && 
+                           typeof netPlayer.position === "object" && 
+                           typeof netPlayer.position.x === "number" && 
+                           typeof netPlayer.position.y === "number" && 
+                           typeof netPlayer.position.z === "number";
+
+    if (!hasValidCoords) {
+      return;
+    }
+
     // Initialize position and targetPosition on first receive
-    if (!car.targetPosition && netPlayer.position) {
+    if (!car.targetPosition) {
       car.position.x = netPlayer.position.x;
       car.position.y = netPlayer.position.y;
       car.position.z = netPlayer.position.z;
@@ -56,9 +67,7 @@ export class SyncManager {
       }
     } else {
       // Store targets for interpolation
-      if (netPlayer.position) {
-        car.targetPosition = { x: netPlayer.position.x, y: netPlayer.position.y, z: netPlayer.position.z };
-      }
+      car.targetPosition = { x: netPlayer.position.x, y: netPlayer.position.y, z: netPlayer.position.z };
       if (netPlayer.velocity) {
         car.targetVelocity = { x: netPlayer.velocity.x, y: netPlayer.velocity.y, z: netPlayer.velocity.z };
       }
@@ -70,11 +79,16 @@ export class SyncManager {
     // Set other properties
     if (typeof netPlayer.speed === "number") {
       car.targetSpeed = netPlayer.speed;
+      car.speed = netPlayer.speed;
     }
     if (typeof netPlayer.isDrifting === "boolean") {
       car.isDrifting = netPlayer.isDrifting;
       car.targetIsDrifting = netPlayer.isDrifting;
+    } else if (typeof netPlayer.drift === "boolean") {
+      car.isDrifting = netPlayer.drift;
+      car.targetIsDrifting = netPlayer.drift;
     }
+    
     if (typeof netPlayer.currentLap === "number") {
       car.currentLap = netPlayer.currentLap;
     } else if (typeof netPlayer.lap === "number") {
@@ -95,14 +109,23 @@ export class SyncManager {
     // Steering, wheel rotation and nitro sync
     if (typeof netPlayer.steerValue === "number") {
       car.steerValue = netPlayer.steerValue;
+      car.targetSteerValue = netPlayer.steerValue;
     } else if (typeof netPlayer.steering === "number") {
       car.steerValue = netPlayer.steering;
+      car.targetSteerValue = netPlayer.steering;
+    }
+
+    if (typeof netPlayer.wheelRotation === "number") {
+      car.wheelspinAngle = netPlayer.wheelRotation;
+      car.targetWheelRotation = netPlayer.wheelRotation;
     }
 
     if (typeof netPlayer.isNitroActive === "boolean") {
       car.isNitroActive = netPlayer.isNitroActive;
+      car.targetIsNitroActive = netPlayer.isNitroActive;
     } else if (typeof netPlayer.nitro === "boolean") {
       car.isNitroActive = netPlayer.nitro;
+      car.targetIsNitroActive = netPlayer.nitro;
     }
   }
 }
