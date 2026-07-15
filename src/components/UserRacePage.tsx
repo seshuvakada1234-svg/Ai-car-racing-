@@ -30,6 +30,7 @@ import * as THREE from "three";
 import { GameSettings, CarState, ControlsState, GamePhase } from "../types";
 import { MultiplayerRaceLoadingScreen } from "./MultiplayerRaceLoadingScreen";
 import { NormalRoomService } from "../multiplayer/NormalRoomService";
+import { multiplayerVehicleSync } from "../multiplayer/multiplayerVehicleSync";
 import {
   initializeRaceStartSync,
   updatePlayerReady,
@@ -209,6 +210,7 @@ export const RaceScene: React.FC = () => {
   const lastTimeRef = useRef<number>(Date.now());
   const countdownTimerRef = useRef<number | null>(null);
   const remotePlayersMapRef = useRef<Map<string, any>>(new Map());
+  const webSocketPlayersMapRef = useRef<Map<string, any>>(new Map());
 
   // Clean initialization values on mount or room change
   useEffect(() => {
@@ -1016,6 +1018,34 @@ export const RaceScene: React.FC = () => {
     };
   }, [mp.room?.roomCode, mp.playerId]);
 
+  // Connect and manage high-performance WebSocket vehicle sync
+  useEffect(() => {
+    if (!mp.room || !mp.room.roomCode) return;
+    const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
+    if (!activePlayerId) return;
+
+    const localRacer = mp.room.players.find((p: any) => p.uid === activePlayerId || p.id === activePlayerId);
+    if (!localRacer) return;
+
+    console.log("[Vehicle Sync] Initializing real-time synchronization link...");
+    multiplayerVehicleSync.connect({
+      roomCode: mp.room.roomCode,
+      playerId: activePlayerId,
+      playerName: localRacer.playerName || localRacer.name || "Driver",
+      selectedCar: getCarIdString(localRacer.carId),
+      carColor: localRacer.carColor || "#0062ff",
+      onRemoteUpdate: (pid, state) => {
+        webSocketPlayersMapRef.current.set(pid, state);
+      }
+    });
+
+    return () => {
+      console.log("[Vehicle Sync] Disconnecting real-time synchronization link...");
+      multiplayerVehicleSync.disconnect();
+      webSocketPlayersMapRef.current.clear();
+    };
+  }, [mp.room?.roomCode, mp.playerId]);
+
   // Callback triggered inside the canvas animation frames
   const handleTickUpdate = (updatedCars: CarState[]) => {
     if (!mp.room) return;
@@ -1056,7 +1086,10 @@ export const RaceScene: React.FC = () => {
       }
 
       const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
-      let netPlayer = remotePlayersMapRef.current.get(netId);
+      let netPlayer = webSocketPlayersMapRef.current.get(netId);
+      if (!netPlayer) {
+        netPlayer = remotePlayersMapRef.current.get(netId);
+      }
       if (!netPlayer) {
         netPlayer = mp.room?.players?.find((p: any) => p.id === netId || p.uid === netId);
       }

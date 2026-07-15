@@ -2,6 +2,7 @@ import { useMemo, useState, useCallback } from "react";
 import { RoomData, RoomManager } from "../multiplayer/RoomManager";
 import { PlayerManager, GridEntry } from "../multiplayer/PlayerManager";
 import { useRoom } from "./useRoom";
+import { multiplayerVehicleSync } from "../multiplayer/multiplayerVehicleSync";
 
 export interface UseMultiplayerReturn {
   // Room states
@@ -109,50 +110,12 @@ export function useMultiplayer(roomOverride?: RoomData | null): UseMultiplayerRe
     }
   }, []);
 
-  const sendLocalCar = useCallback(async (car: any) => {
-    const now = Date.now();
-    // Throttle to 50ms (exactly 20 updates per second) as requested
-    if (now - lastLocalSend < 50) return;
-    lastLocalSend = now;
-
-    const code = RoomManager.getCurrentCode();
-    const pid = RoomManager.getCurrentPlayerId();
-    if (!code || !pid) return;
-
-    // Log telemetry before send
-    const pos = car.position ? { x: car.position.x, y: car.position.y, z: car.position.z } : null;
-    const rot = car.angle ?? 0;
-    const sp = car.speed ?? 0;
-    console.log(
-      `[SEND]\n` +
-      `playerId: ${pid}\n` +
-      `roomCode: ${code}\n` +
-      `position: ${JSON.stringify(pos)}\n` +
-      `rotation: ${rot}\n` +
-      `speed: ${sp}\n` +
-      `timestamp: ${now}`
-    );
-
-    try {
-      await RoomManager.updateCurrentPlayerPosition(code, pid, car);
-    } catch (e) {
-      // quiet fail on active frame rendering
-    }
+  const sendLocalCar = useCallback((car: any) => {
+    multiplayerVehicleSync.sendUpdate(car);
   }, []);
 
-  const sendAICars = useCallback(async (aiCars: any[]) => {
-    const now = Date.now();
-    if (now - lastAiSend < 200) return;
-    lastAiSend = now;
-
-    const code = RoomManager.getCurrentCode();
-    if (!code) return;
-
-    try {
-      await RoomManager.updateAICarsPosition(code, aiCars);
-    } catch (e) {
-      // quiet fail on active frame rendering
-    }
+  const sendAICars = useCallback((aiCars: any[]) => {
+    multiplayerVehicleSync.sendAICars(aiCars);
   }, []);
 
   return {

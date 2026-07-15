@@ -99,9 +99,9 @@ export function setupMultiplayerWebSocket(server: Server) {
 
         switch (type) {
           case "CREATE_ROOM": {
-            const { playerName, selectedCar, carColor, difficulty, selectedMap, isLiveMode } = payload;
+            const { playerName, selectedCar, carColor, difficulty, selectedMap, isLiveMode, playerId: customPlayerId } = payload;
             const code = RoomCodeGenerator.generate();
-            const playerId = "host_" + Math.random().toString(36).substring(2, 8);
+            const playerId = customPlayerId || "host_" + Math.random().toString(36).substring(2, 8);
 
             const newRoom: ServerRoom = {
               code,
@@ -146,7 +146,7 @@ export function setupMultiplayerWebSocket(server: Server) {
           }
 
           case "JOIN_ROOM": {
-            const { roomCode, playerName, selectedCar, carColor } = payload;
+            const { roomCode, playerName, selectedCar, carColor, playerId: customPlayerId } = payload;
             const cleanCode = (roomCode || "").toUpperCase().trim();
             const room = roomsData.get(cleanCode);
 
@@ -160,7 +160,10 @@ export function setupMultiplayerWebSocket(server: Server) {
               return;
             }
 
-            if (room.phase !== "lobby") {
+            const playerId = customPlayerId || "player_" + Math.random().toString(36).substring(2, 8);
+            const playerAlreadyInRoom = room.players.has(playerId);
+
+            if (room.phase !== "lobby" && !playerAlreadyInRoom) {
               ws.send(
                 JSON.stringify({
                   type: "ERROR",
@@ -170,30 +173,32 @@ export function setupMultiplayerWebSocket(server: Server) {
               return;
             }
 
-            // Count existing human players (max 5 humans allowed)
-            const humanCount = Array.from(room.players.values()).filter((p) => !p.isAI).length;
-            if (humanCount >= 5) {
-              ws.send(
-                JSON.stringify({
-                  type: "ERROR",
-                  payload: { message: "Lobby is full! Maximum 5 human players reached." },
-                }),
-              );
-              return;
+            if (!playerAlreadyInRoom) {
+              // Count existing human players (max 5 humans allowed)
+              const humanCount = Array.from(room.players.values()).filter((p) => !p.isAI).length;
+              if (humanCount >= 5) {
+                ws.send(
+                  JSON.stringify({
+                    type: "ERROR",
+                    payload: { message: "Lobby is full! Maximum 5 human players reached." },
+                  }),
+                );
+                return;
+              }
+
+              const joinedPlayer: ServerPlayer = {
+                id: playerId,
+                name: playerName || "Challenger",
+                selectedCar: (selectedCar as any) || "ferrari",
+                carColor: carColor || "#00ffcc",
+                ready: room.isLiveMode ? true : false, // Autoready in live mode
+                isHost: false,
+                isAI: false,
+              };
+
+              room.players.set(playerId, joinedPlayer);
             }
 
-            const playerId = "player_" + Math.random().toString(36).substring(2, 8);
-            const joinedPlayer: ServerPlayer = {
-              id: playerId,
-              name: playerName || "Challenger",
-              selectedCar: (selectedCar as any) || "ferrari",
-              carColor: carColor || "#00ffcc",
-              ready: room.isLiveMode ? true : false, // Autoready in live mode
-              isHost: false,
-              isAI: false,
-            };
-
-            room.players.set(playerId, joinedPlayer);
             socketToRoomMap.set(ws, { roomCode: cleanCode, playerId });
 
             ws.send(
