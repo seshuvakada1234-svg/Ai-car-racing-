@@ -2,6 +2,20 @@ let socket: WebSocket | null = null;
 let activeRoomCode = "";
 let activePlayerId = "";
 let lastSendTime = 0;
+let activeOnRaceStart: ((startTime: number) => void) | null = null;
+
+/**
+ * Triggers server-authoritative race start via WebSocket
+ */
+export function triggerWsStartRace(): void {
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: "start_race" }));
+    console.log("[WS CLIENT] Host triggered start_race via WebSocket.");
+  } else {
+    console.warn("[WS CLIENT] Cannot trigger start_race, socket not open.");
+  }
+}
+
 
 /**
  * Throttled send of vehicle coordinates (position, rotation, speed, nitro, etc.)
@@ -85,7 +99,8 @@ export function connectVehicleSocket(
   roomCode: string,
   playerId: string,
   onRemoteUpdate: (playerId: string, data: any) => void,
-  onPlayerLeft: (playerId: string) => void
+  onPlayerLeft: (playerId: string) => void,
+  onRaceStart?: (startTime: number) => void
 ): () => void {
   // Close any existing socket first to avoid leak
   disconnectVehicleSocket();
@@ -93,6 +108,7 @@ export function connectVehicleSocket(
   activeRoomCode = roomCode.toUpperCase().trim();
   activePlayerId = playerId;
   lastSendTime = 0;
+  activeOnRaceStart = onRaceStart || null;
 
   const isHttps = window.location.protocol === "https:";
   const wsProtocol = isHttps ? "wss:" : "ws:";
@@ -130,25 +146,33 @@ export function connectVehicleSocket(
     try {
       const data = JSON.parse(event.data);
       
-      if (data.type === "vehicleUpdate") {
+      if (data.type === "vehicleUpdate" || data.type === "vehicle_update") {
         const { playerId, roomCode } = data;
         if (playerId === activePlayerId) return; // ignore self
         
-        console.log("[CLIENT RECEIVE]", { playerId, roomCode });
         onRemoteUpdate(playerId, data);
         return;
       }
 
-      if (data.type === "playerLeft") {
+      if (data.type === "playerLeft" || data.type === "player_leave") {
         const { playerId } = data;
         console.log("[WS CLIENT] Remote player left room:", playerId);
         onPlayerLeft(playerId);
         return;
       }
 
-      if (data.type === "playerJoined") {
+      if (data.type === "playerJoined" || data.type === "player_join") {
         const { playerId } = data;
         console.log("[WS CLIENT] Remote player joined room:", playerId);
+        return;
+      }
+
+      if (data.type === "race_start" || data.type === "raceStart") {
+        const { startTime } = data;
+        console.log("[WS CLIENT] Race start countdown signal received:", startTime);
+        if (activeOnRaceStart) {
+          activeOnRaceStart(startTime);
+        }
         return;
       }
     } catch (err) {

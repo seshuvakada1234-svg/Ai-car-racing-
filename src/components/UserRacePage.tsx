@@ -30,7 +30,7 @@ import * as THREE from "three";
 import { GameSettings, CarState, ControlsState, GamePhase } from "../types";
 import { MultiplayerRaceLoadingScreen } from "./MultiplayerRaceLoadingScreen";
 import { NormalRoomService } from "../multiplayer/NormalRoomService";
-import { connectVehicleSocket, sendVehicleUpdate } from "../network/vehicleSocket";
+import { connectVehicleSocket, sendVehicleUpdate, triggerWsStartRace } from "../network/vehicleSocket";
 import {
   initializeRaceStartSync,
   updatePlayerReady,
@@ -206,6 +206,7 @@ export const RaceScene: React.FC = () => {
   const [countdown, setCountdown] = useState(3);
   const [countdownMsg, setCountdownMsg] = useState("...");
   const [countdownLabel, setCountdownLabel] = useState("Engine Warming");
+  const [wsRaceStartTime, setWsRaceStartTime] = useState<number | null>(null);
 
   const lastTimeRef = useRef<number>(Date.now());
   const countdownTimerRef = useRef<number | null>(null);
@@ -218,6 +219,7 @@ export const RaceScene: React.FC = () => {
     (window as any).worldReady = false;
     (window as any).shadersCompiled = false;
     (window as any).countdownStuckSecs = 0;
+    setWsRaceStartTime(null);
   }, [normalizedCode]);
 
   // 1. Room Connection & Firestore state logging
@@ -880,6 +882,9 @@ export const RaceScene: React.FC = () => {
   useEffect(() => {
     if (!mp.room || !mp.room.roomCode) return;
 
+    const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
+    const isHost = mp.room.hostId === activePlayerId;
+
     if (mp.room.status === "racing" && !mp.room.raceStarted) {
       // 1. Loading/waiting phase
       setLoadingMultiplayer(true);
@@ -897,24 +902,24 @@ export const RaceScene: React.FC = () => {
         setPhase("countdown");
       }
 
-      const startTime = mp.room.countdownStartTime;
-      if (!startTime) {
-        setCountdown(60);
-        setCountdownMsg("60");
-        setCountdownLabel("Match begins in");
-      } else {
-        const startTimeMillis = startTime.toMillis ? startTime.toMillis() : new Date(startTime).getTime();
+      // If we are the host, trigger the WebSocket race start immediately if we haven't yet
+      if (isHost && !wsRaceStartTime) {
+        triggerWsStartRace();
+      }
 
+      // If we have a WebSocket race start time, use it!
+      if (wsRaceStartTime) {
         const tick = () => {
-          const currentServerTime = getSynchronizedServerTime();
-          const elapsedSecs = Math.floor((currentServerTime - startTimeMillis) / 1000);
-          const remaining = 60 - elapsedSecs;
+          const now = Date.now();
+          const msLeft = wsRaceStartTime - now;
+          const remaining = Math.ceil(msLeft / 1000);
 
           if (remaining > 0) {
             setCountdown(remaining);
             setCountdownMsg(String(remaining));
-            setCountdownLabel("Match begins in");
-          } else if (remaining === 0) {
+            setCountdownLabel("Get Ready!");
+          } else if (msLeft > -1000) {
+            // Show GO! for 1 second
             setCountdown(0);
             setCountdownMsg("GO!");
             setCountdownLabel("Green light");
@@ -926,8 +931,6 @@ export const RaceScene: React.FC = () => {
             }
 
             // Host only: update room status to racing in Firestore so spectators/broadcasters can follow
-            const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
-            const isHost = mp.room.hostId === activePlayerId;
             if (isHost) {
               beginRace(mp.room.roomCode).catch((err) => {
                 console.error("Host failed to transition room to racing:", err);
@@ -939,6 +942,11 @@ export const RaceScene: React.FC = () => {
         tick();
         const intervalId = setInterval(tick, 100);
         return () => clearInterval(intervalId);
+      } else {
+        // Fallback/loading until WebSocket start time is received
+        setCountdown(5);
+        setCountdownMsg("...");
+        setCountdownLabel("Warming Engine");
       }
     } else if (mp.room.status === "racing" && mp.room.raceStarted) {
       // 3. Active racing phase (reconnect/join mid-race)
@@ -953,7 +961,7 @@ export const RaceScene: React.FC = () => {
         lastTimeRef.current = Date.now();
       }
     }
-  }, [mp.room?.status, mp.room?.raceStarted, mp.room?.countdownStartTime, mp.room?.roomCode, mp.room?.hostId, mp.playerId, vehicleInitReady]);
+  }, [mp.room?.status, mp.room?.raceStarted, mp.room?.roomCode, mp.room?.hostId, mp.playerId, vehicleInitReady, wsRaceStartTime]);
 
   const handleRemovePlayer = async (pid: string) => {
     if (!mp.room?.roomCode) return;
@@ -1081,6 +1089,9 @@ export const RaceScene: React.FC = () => {
           });
         });
         remotePlayersMapRef.current.delete(leftPid);
+      },
+      (startTime) => {
+        setWsRaceStartTime(startTime);
       }
     );
 
