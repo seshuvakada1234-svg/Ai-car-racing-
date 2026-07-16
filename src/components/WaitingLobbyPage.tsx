@@ -7,6 +7,7 @@ import { db } from "../lib/firebase";
 import { handleFirestoreError, OperationType } from "../lib/firestoreError";
 import { NormalRoomService, NormalRoom, NormalPlayer } from "../multiplayer/NormalRoomService";
 import { RoomManager } from "../multiplayer/RoomManager";
+import { measureServerTimeOffset } from "../multiplayer/multiplayerRaceStartSync";
 import {
   Compass,
   Users,
@@ -209,6 +210,23 @@ export const WaitingLobbyPage: React.FC = () => {
       unsubPlayers();
     };
   }, [normalizedCode]);
+
+  // 1c. Measure clock offset exactly once on entering the waiting room
+  const measuredOffsetRef = useRef(false);
+  useEffect(() => {
+    if (!normalizedCode || !profile?.uid) return;
+    if (measuredOffsetRef.current) return;
+    measuredOffsetRef.current = true;
+
+    const runSync = async () => {
+      try {
+        await measureServerTimeOffset(normalizedCode, profile.uid);
+      } catch (e) {
+        console.error("Error during server clock calibration:", e);
+      }
+    };
+    runSync();
+  }, [normalizedCode, profile?.uid]);
 
   // 1b. Automatic Map Checking and Downloading Hook
   useEffect(() => {

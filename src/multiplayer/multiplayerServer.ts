@@ -80,7 +80,20 @@ function serializeRoom(room: ServerRoom) {
  * Attaches real-time WebSocket capabilities into Express/HTTP Server
  */
 export function setupMultiplayerWebSocket(server: Server) {
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on("upgrade", (request, socket, head) => {
+    try {
+      const urlObj = new URL(request.url || "", `http://${request.headers.host || "localhost"}`);
+      if (urlObj.pathname !== "/ws/vehicle") {
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          wss.emit("connection", ws, request);
+        });
+      }
+    } catch (err) {
+      console.error("[Multiplayer Server] Upgrade routing error:", err);
+    }
+  });
 
   wss.on("error", (err) => {
     console.error("[Multiplayer Server] WebSocketServer error occurred:", err);

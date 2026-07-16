@@ -4,6 +4,8 @@ import http from "http";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { setupMultiplayerWebSocket } from "./src/multiplayer/multiplayerServer";
+import { WebSocketServer } from "ws";
+import { setupVehicleWsServer } from "./src/network/wsVehicleServer";
 
 async function startServer() {
   const app = express();
@@ -144,6 +146,23 @@ async function startServer() {
 
   // Create standard HTTP server wrapping express app
   const server = http.createServer(app);
+
+  // Setup our vehicle WebSocket server on /ws/vehicle
+  const vehicleWss = new WebSocketServer({ noServer: true });
+  setupVehicleWsServer(vehicleWss);
+
+  server.on("upgrade", (request, socket, head) => {
+    try {
+      const urlObj = new URL(request.url || "", `http://${request.headers.host || "localhost"}`);
+      if (urlObj.pathname === "/ws/vehicle") {
+        vehicleWss.handleUpgrade(request, socket, head, (ws) => {
+          vehicleWss.emit("connection", ws, request);
+        });
+      }
+    } catch (err) {
+      console.error("[Vehicle WS Upgrade] Error routing upgrade:", err);
+    }
+  });
 
   // Setup multiplayer real-time sync WebSocket services
   setupMultiplayerWebSocket(server);

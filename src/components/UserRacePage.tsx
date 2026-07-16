@@ -30,6 +30,7 @@ import * as THREE from "three";
 import { GameSettings, CarState, ControlsState, GamePhase } from "../types";
 import { MultiplayerRaceLoadingScreen } from "./MultiplayerRaceLoadingScreen";
 import { NormalRoomService } from "../multiplayer/NormalRoomService";
+import { connectVehicleSocket, sendVehicleUpdate } from "../network/vehicleSocket";
 import {
   initializeRaceStartSync,
   updatePlayerReady,
@@ -1016,6 +1017,78 @@ export const RaceScene: React.FC = () => {
     };
   }, [mp.room?.roomCode, mp.playerId]);
 
+  // Connect to vehicle WebSocket relay alongside Firestore subscription
+  useEffect(() => {
+    if (!mp.room?.roomCode) return;
+    const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
+    if (!activePlayerId) return;
+
+    // WebSocket updates bypass Firestore for live position/rotation
+    const disconnectSocket = connectVehicleSocket(
+      mp.room.roomCode,
+      activePlayerId,
+      (remotePid, wsData) => {
+        // Convert the incoming rotation quaternion back to a Y-axis angle
+        let angle = 0;
+        if (wsData.rotation && typeof wsData.rotation.y === "number" && typeof wsData.rotation.w === "number") {
+          // Since quaternion is {x:0, y:sin(angle/2), z:0, w:cos(angle/2)}
+          // angle/2 = atan2(y, w) => angle = 2 * atan2(y, w)
+          angle = 2 * Math.atan2(wsData.rotation.y, wsData.rotation.w);
+        }
+
+        // Shape the data like NetPlayer (the firestore player data format expected by SyncManager.unpackCarState)
+        const netPlayerShape = {
+          position: wsData.position,
+          velocity: wsData.velocity || { x: 0, y: 0, z: 0 },
+          angle: angle,
+          speed: wsData.speed ?? 0,
+          isDrifting: !!wsData.drift,
+          isNitroActive: !!wsData.nitro,
+          currentLap: wsData.lap,
+          currentCheckpointIndex: wsData.checkpoint,
+          totalDistanceTraveled: wsData.totalDistanceTraveled,
+          isFinished: !!wsData.isFinished,
+          steerValue: wsData.steering ?? 0,
+          wheelRotation: wsData.wheelRotation ?? 0
+        };
+
+        // Put this data in remotePlayersMapRef so our standard loop can read it as fallback,
+        // but also update the active car object immediately!
+        remotePlayersMapRef.current.set(remotePid, netPlayerShape);
+
+        setCars((prevCars) => {
+          return prevCars.map((car) => {
+            const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
+            if (netId === remotePid) {
+              const rawCid = getCarIdString(netPlayerShape.carId || car.carId);
+              car.carId = rawCid.toLowerCase().includes("porsche")
+                ? "porsche"
+                : rawCid.toLowerCase().includes("bugatti")
+                  ? "bugatti"
+                  : "ferrari";
+              SyncManager.unpackCarState(car, netPlayerShape);
+            }
+            return car;
+          });
+        });
+      },
+      (leftPid) => {
+        // Remove left player's car from the cars list
+        setCars((prevCars) => {
+          return prevCars.filter((car) => {
+            const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
+            return netId !== leftPid;
+          });
+        });
+        remotePlayersMapRef.current.delete(leftPid);
+      }
+    );
+
+    return () => {
+      disconnectSocket();
+    };
+  }, [mp.room?.roomCode, mp.playerId]);
+
   // Callback triggered inside the canvas animation frames
   const handleTickUpdate = (updatedCars: CarState[]) => {
     if (!mp.room) return;
@@ -1023,6 +1096,7 @@ export const RaceScene: React.FC = () => {
     const playerCar = updatedCars.find((c) => c.id === "player");
     if (playerCar) {
       mp.sendLocalCar(playerCar);
+      sendVehicleUpdate(playerCar);
     }
 
     const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
