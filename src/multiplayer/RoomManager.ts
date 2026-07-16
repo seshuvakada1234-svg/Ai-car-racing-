@@ -44,7 +44,7 @@ function safeRemoveItem(type: "local" | "session", key: string): void {
   } catch (e) {}
 }
 
-export type RoomStatus = "waiting" | "countdown" | "racing" | "finished" | "archived" | "closed" | "complete";
+export type RoomStatus = "waiting" | "preparing" | "countdown" | "racing" | "finished" | "archived" | "closed" | "complete";
 
 export interface RoomPlayer {
   id: string;
@@ -186,7 +186,7 @@ export class RoomManager {
   }
 
   static async startRace(code: string): Promise<void> {
-    await RoomService.setRoomStatus(code, "racing");
+    await RoomService.setRoomStatus(code, "preparing");
   }
 
   static async updateCurrentPlayerPosition(code: string, playerId: string, carState: any): Promise<void> {

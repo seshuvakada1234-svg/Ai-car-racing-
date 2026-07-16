@@ -30,7 +30,7 @@ export class LiveModeManager {
         });
       },
       (status) => {
-        if (status === "racing") {
+        if (status === "racing" || status === "preparing" || status === "countdown") {
           LobbyManager.stop();
         }
       },
@@ -71,7 +71,7 @@ export class LiveModeManager {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   private static toPhase(status: RoomData["status"]): LivePhase {
-    if (status === "racing") return "racing";
+    if (status === "racing" || status === "preparing" || status === "countdown") return "racing";
     if (status === "finished") return "finished";
     return "lobby";
   }

@@ -77,7 +77,9 @@ export async function startCountdown(roomCode: string) {
   await updateDoc(roomRef, {
     status: "countdown",
     phase: "countdown",
-    countdownStartTime: serverTimestamp(),
+    countdownStart: serverTimestamp(),
+    countdownStartTime: serverTimestamp(), // fallback/alias
+    countdownDuration: 60,
     updatedAt: serverTimestamp()
   });
 }

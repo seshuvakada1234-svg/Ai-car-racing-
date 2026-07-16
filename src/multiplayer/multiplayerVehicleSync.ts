@@ -210,11 +210,10 @@ class MultiplayerVehicleSyncManager {
 
             // Log RECEIVE details exactly as requested by user
             console.log(
-              `[RECEIVE]\n` +
-              `playerId: ${p.id}\n` +
+              `RECEIVE:\n` +
+              `senderPlayerId: ${p.id}\n` +
               `position: ${JSON.stringify(p.position)}\n` +
               `rotation: ${p.angle}\n` +
-              `speed: ${p.speed}\n` +
               `timestamp: ${Date.now()}`
             );
 
@@ -296,12 +295,10 @@ class MultiplayerVehicleSyncManager {
 
     // Print SEND log precisely as required
     console.log(
-      `[SEND]\n` +
+      `SEND:\n` +
       `playerId: ${this.playerId}\n` +
-      `roomCode: ${this.roomCode}\n` +
       `position: ${JSON.stringify(payload.position)}\n` +
       `rotation: ${payload.angle}\n` +
-      `speed: ${payload.speed}\n` +
       `timestamp: ${now}`
     );
 

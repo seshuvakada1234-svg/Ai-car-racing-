@@ -47,12 +47,13 @@ const roomsData = new Map<string, ServerRoom>();
 const socketToRoomMap = new Map<WebSocket, { roomCode: string; playerId: string }>();
 
 // Broadcaster helper
-function broadcastToRoom(room: ServerRoom, payload: any) {
+function broadcastToRoom(room: ServerRoom, payload: any, excludeSocket?: WebSocket) {
   const jsonEncoded = JSON.stringify(payload);
   for (const [playerId, player] of room.players.entries()) {
     if (player.isAI) continue;
     // We send payload to socket of player
     for (const [socket, info] of socketToRoomMap.entries()) {
+      if (socket === excludeSocket) continue;
       if (info.roomCode === room.code && info.playerId === playerId) {
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(jsonEncoded);
@@ -274,13 +275,21 @@ export function setupMultiplayerWebSocket(server: Server) {
                 player.finishTime = payload.finishTime;
               }
 
-              // Fast forwarding states update to everyone else in real-time
+              // Log BROADCAST precisely as requested by user
+              console.log(
+                `BROADCAST\n` +
+                `senderPlayerId: ${socketInfo.playerId}\n` +
+                `roomCode: ${room.code}\n` +
+                `position: ${JSON.stringify(payload.position)}`
+              );
+
+              // Fast forwarding states update to everyone else in real-time (excluding sender)
               broadcastToRoom(room, {
                 type: "SYNC_STATE",
                 payload: {
                   players: Array.from(room.players.values()),
                 },
-              });
+              }, ws);
             }
             break;
           }
