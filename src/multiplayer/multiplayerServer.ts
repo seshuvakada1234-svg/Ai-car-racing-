@@ -81,7 +81,7 @@ function serializeRoom(room: ServerRoom) {
  * Attaches real-time WebSocket capabilities into Express/HTTP Server
  */
 export function setupMultiplayerWebSocket(server: Server) {
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({ server, path: "/ws" });
 
   wss.on("error", (err) => {
     console.error("[Multiplayer Server] WebSocketServer error occurred:", err);
