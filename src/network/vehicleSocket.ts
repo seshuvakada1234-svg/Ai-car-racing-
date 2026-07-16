@@ -157,6 +157,12 @@ export function connectVehicleSocket(
         return;
       }
 
+      if (data.type === "player_list" || data.type === "playerList") {
+        console.log("[WS] player_list received", data);
+        onRemoteUpdate("", data);
+        return;
+      }
+
       if (data.type === "playerLeft" || data.type === "player_leave") {
         const { playerId } = data;
         console.log("[WS CLIENT] Remote player left room:", playerId);

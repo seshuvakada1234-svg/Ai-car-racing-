@@ -1039,187 +1039,23 @@ export const RaceScene: React.FC = () => {
       mp.room.roomCode,
       activePlayerId,
       (remotePid, wsData) => {
-        // Task 1: Verify every incoming vehicle_update message is received
-        console.log("REMOTE UPDATE", wsData);
-
-        // Task 6: Verify playerId comparison
-        if (wsData.playerId === activePlayerId) return;
-
-        // Convert the incoming rotation quaternion back to a Y-axis angle
-        let angle = 0;
-        if (wsData.rotation && typeof wsData.rotation.y === "number" && typeof wsData.rotation.w === "number") {
-          angle = 2 * Math.atan2(wsData.rotation.y, wsData.rotation.w);
-        }
-
-        // Shape the data like NetPlayer (the firestore player data format expected by SyncManager.unpackCarState)
-        const netPlayerShape = {
-          position: wsData.position,
-          velocity: wsData.velocity || { x: 0, y: 0, z: 0 },
-          angle: angle,
-          quaternion: wsData.rotation || { x: 0, y: 0, z: 0, w: 1 },
-          speed: wsData.speed ?? 0,
-          isDrifting: !!wsData.drift,
-          isNitroActive: !!wsData.nitro,
-          currentLap: wsData.lap,
-          currentCheckpointIndex: wsData.checkpoint,
-          totalDistanceTraveled: wsData.totalDistanceTraveled,
-          isFinished: !!wsData.isFinished,
-          steerValue: wsData.steering ?? 0,
-          wheelRotation: wsData.wheelRotation ?? 0,
-          carId: wsData.carId,
-          playerName: wsData.playerName || wsData.name
-        };
-
-        // Put this data in remotePlayersMapRef so our standard loop can read it as fallback,
-        // but also update the active car object immediately!
-        remotePlayersMapRef.current.set(remotePid, netPlayerShape);
-
-        // Task 2: Verify the remote player's object exists. If it doesn't exist, create it immediately.
-        const vehicleRenderer = (window as any).__vehicleRenderer;
-        let remoteVehicle = (window as any).remoteVehicles[remotePid];
-
-        if (vehicleRenderer) {
-          const carIdKey = `remote_${remotePid}`;
-          let carGroup = vehicleRenderer.carGroupMap.get(carIdKey);
-          if (!carGroup) {
-            console.log("[WS CLIENT] Spawning vehicle immediately for player", remotePid);
-            const pInfo = mp.room?.players?.find((p: any) => (p.uid || p.id) === remotePid);
-            const rawCid = getCarIdString(wsData.carId || pInfo?.carId || "ferrari");
-            const baseCarId = rawCid.toLowerCase().includes("porsche")
-              ? "porsche"
-              : rawCid.toLowerCase().includes("bugatti")
-                ? "bugatti"
-                : "ferrari";
-
-            const carState: CarState = {
-              id: carIdKey,
-              name: wsData.playerName || wsData.name || pInfo?.playerName || pInfo?.name || "Driver",
-              isAI: false,
-              color: wsData.carColor || pInfo?.carColor || "#0062ff",
-              carId: baseCarId,
-              position: { x: wsData.position?.x ?? 0, y: wsData.position?.y ?? 0, z: wsData.position?.z ?? 0 },
-              velocity: { x: wsData.velocity?.x ?? 0, y: wsData.velocity?.y ?? 0, z: wsData.velocity?.z ?? 0 },
-              speed: wsData.speed ?? 0,
-              angle: angle,
-              angularVelocity: 0,
-              driftFactor: 0,
-              isDrifting: !!wsData.drift,
-              currentLap: wsData.lap ?? 1,
-              currentCheckpointIndex: wsData.checkpoint ?? 0,
-              distanceToNextCheckpoint: 999,
-              racePosition: 2,
-              totalDistanceTraveled: wsData.totalDistanceTraveled ?? 0,
-              isFinished: !!wsData.isFinished,
-              lastActiveTime: Date.now(),
-              nitroCharged: 60,
-              isNitroActive: !!wsData.nitro,
-              stuckTimer: 0,
-              aiTargetNode: 0,
-              aiSpeedFactor: 1,
-              aiAggression: 0.72,
-            };
-            vehicleRenderer.spawnVehicle(carState);
-            carGroup = vehicleRenderer.carGroupMap.get(carIdKey);
-          }
-          if (carGroup) {
-            (window as any).remoteVehicles[remotePid] = carGroup;
-            remoteVehicle = carGroup;
-          }
-        }
-
-        // Task 8: Add logs
-        console.log("Vehicle update received", remotePid);
-        console.log("Applying transform", wsData.position);
-        console.log("Remote vehicle found", remoteVehicle);
-
-        // Task 3 & 7: Every vehicle_update must execute set on position and quaternion
-        if (remoteVehicle) {
-          remoteVehicle.position.set(
-            wsData.position.x,
-            wsData.position.y,
-            wsData.position.z
-          );
-          if (wsData.rotation) {
-            remoteVehicle.quaternion.set(
-              wsData.rotation.x,
-              wsData.rotation.y,
-              wsData.rotation.z,
-              wsData.rotation.w
-            );
-          }
-        }
-
-        setCars((prevCars) => {
-          const hasCar = prevCars.some((car) => {
-            const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
-            return netId === remotePid;
+        // Support player_list / playerList messages
+        if (!remotePid && (wsData.type === "player_list" || wsData.type === "playerList")) {
+          console.log("[WS] player_list received", wsData);
+          const latestStates = wsData.latestStates || {};
+          Object.keys(latestStates).forEach((playerId) => {
+            if (playerId === activePlayerId) return; // ignore self
+            const state = latestStates[playerId];
+            if (!state) return;
+            console.log("[REMOTE] Creating remote vehicle", playerId);
+            handleSinglePlayerUpdate(playerId, state);
           });
+          return;
+        }
 
-          if (!hasCar) {
-            const pInfo = mp.room?.players?.find((p: any) => (p.uid || p.id) === remotePid);
-            const rawCid = getCarIdString(wsData.carId || pInfo?.carId || "ferrari");
-            const baseCarId = rawCid.toLowerCase().includes("porsche")
-              ? "porsche"
-              : rawCid.toLowerCase().includes("bugatti")
-                ? "bugatti"
-                : "ferrari";
-
-            const newCar: CarState = {
-              id: `remote_${remotePid}`,
-              name: wsData.playerName || wsData.name || pInfo?.playerName || pInfo?.name || "Driver",
-              isAI: false,
-              color: wsData.carColor || pInfo?.carColor || "#0062ff",
-              carId: baseCarId,
-              position: { x: wsData.position?.x ?? 0, y: wsData.position?.y ?? 0, z: wsData.position?.z ?? 0 },
-              velocity: { x: wsData.velocity?.x ?? 0, y: wsData.velocity?.y ?? 0, z: wsData.velocity?.z ?? 0 },
-              speed: wsData.speed ?? 0,
-              angle: angle,
-              angularVelocity: 0,
-              driftFactor: 0,
-              isDrifting: !!wsData.drift,
-              currentLap: wsData.lap ?? 1,
-              currentCheckpointIndex: wsData.checkpoint ?? 0,
-              distanceToNextCheckpoint: 999,
-              racePosition: prevCars.length + 1,
-              totalDistanceTraveled: wsData.totalDistanceTraveled ?? 0,
-              isFinished: !!wsData.isFinished,
-              lastActiveTime: Date.now(),
-              nitroCharged: 60,
-              isNitroActive: !!wsData.nitro,
-              stuckTimer: 0,
-              aiTargetNode: 0,
-              aiSpeedFactor: 1,
-              aiAggression: 0.72,
-            };
-
-            // Set targets for interpolation immediately
-            newCar.targetPosition = { ...newCar.position };
-            newCar.targetVelocity = { ...newCar.velocity };
-            newCar.targetAngle = newCar.angle;
-            newCar.targetSpeed = newCar.speed;
-            newCar.targetIsDrifting = newCar.isDrifting;
-            newCar.targetIsNitroActive = newCar.isNitroActive;
-
-            console.log(`[WS CLIENT] Dynamically spawning remote car state for player ${remotePid}`);
-            return [...prevCars, newCar];
-          }
-
-          return prevCars.map((car) => {
-            const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
-            if (netId === remotePid) {
-              const rawCid = getCarIdString(netPlayerShape.carId || car.carId);
-              car.carId = rawCid.toLowerCase().includes("porsche")
-                ? "porsche"
-                : rawCid.toLowerCase().includes("bugatti")
-                  ? "bugatti"
-                  : "ferrari";
-              SyncManager.unpackCarState(car, netPlayerShape);
-              car.position = { ...netPlayerShape.position };
-              car.quaternion = netPlayerShape.quaternion;
-            }
-            return car;
-          });
-        });
+        if (remotePid) {
+          handleSinglePlayerUpdate(remotePid, wsData);
+        }
       },
       (leftPid) => {
         // Remove left player's car from the cars list
@@ -1235,6 +1071,194 @@ export const RaceScene: React.FC = () => {
         setWsRaceStartTime(startTime);
       }
     );
+
+    // Inner helper function to process updates per remote player
+    function handleSinglePlayerUpdate(remotePid: string, wsData: any) {
+      // Task 1: Verify every incoming vehicle_update message is received
+      console.log("REMOTE UPDATE", wsData);
+
+      // Task 6: Verify playerId comparison
+      if (wsData.playerId === activePlayerId || remotePid === activePlayerId) return;
+
+      const vehicleRenderer = (window as any).__vehicleRenderer;
+      let remoteVehicle = (window as any).remoteVehicles[remotePid] || (vehicleRenderer?.carGroupMap?.get(`remote_${remotePid}`));
+
+      // Convert the incoming rotation quaternion back to a Y-axis angle
+      let angle = 0;
+      if (wsData.rotation && typeof wsData.rotation.y === "number" && typeof wsData.rotation.w === "number") {
+        angle = 2 * Math.atan2(wsData.rotation.y, wsData.rotation.w);
+      }
+
+      // Shape the data like NetPlayer (the firestore player data format expected by SyncManager.unpackCarState)
+      const netPlayerShape = {
+        position: wsData.position,
+        velocity: wsData.velocity || { x: 0, y: 0, z: 0 },
+        angle: angle,
+        quaternion: wsData.rotation || { x: 0, y: 0, z: 0, w: 1 },
+        speed: wsData.speed ?? 0,
+        isDrifting: !!wsData.drift,
+        isNitroActive: !!wsData.nitro,
+        currentLap: wsData.lap,
+        currentCheckpointIndex: wsData.checkpoint,
+        totalDistanceTraveled: wsData.totalDistanceTraveled,
+        isFinished: !!wsData.isFinished,
+        steerValue: wsData.steering ?? 0,
+        wheelRotation: wsData.wheelRotation ?? 0,
+        carId: wsData.carId,
+        playerName: wsData.playerName || wsData.name
+      };
+
+      // Put this data in remotePlayersMapRef so our standard loop can read it as fallback,
+      // but also update the active car object immediately!
+      remotePlayersMapRef.current.set(remotePid, netPlayerShape);
+
+      // Task 2 & 3: Verify the remote player's object exists. If it doesn't exist, create/spawn it immediately.
+      if (!remoteVehicle && vehicleRenderer) {
+        console.log("[REMOTE] Creating remote vehicle", remotePid);
+        const carIdKey = `remote_${remotePid}`;
+        const pInfo = mp.room?.players?.find((p: any) => (p.uid || p.id) === remotePid);
+        const rawCid = getCarIdString(wsData.carId || pInfo?.carId || "ferrari");
+        const baseCarId = rawCid.toLowerCase().includes("porsche")
+          ? "porsche"
+          : rawCid.toLowerCase().includes("bugatti")
+            ? "bugatti"
+            : "ferrari";
+
+        const carState: CarState = {
+          id: carIdKey,
+          name: wsData.playerName || wsData.name || pInfo?.playerName || pInfo?.name || "Driver",
+          isAI: false,
+          color: wsData.carColor || pInfo?.carColor || "#0062ff",
+          carId: baseCarId,
+          position: { x: wsData.position?.x ?? 0, y: wsData.position?.y ?? 0, z: wsData.position?.z ?? 0 },
+          velocity: { x: wsData.velocity?.x ?? 0, y: wsData.velocity?.y ?? 0, z: wsData.velocity?.z ?? 0 },
+          speed: wsData.speed ?? 0,
+          angle: angle,
+          angularVelocity: 0,
+          driftFactor: 0,
+          isDrifting: !!wsData.drift,
+          currentLap: wsData.lap ?? 1,
+          currentCheckpointIndex: wsData.checkpoint ?? 0,
+          distanceToNextCheckpoint: 999,
+          racePosition: 2,
+          totalDistanceTraveled: wsData.totalDistanceTraveled ?? 0,
+          isFinished: !!wsData.isFinished,
+          lastActiveTime: Date.now(),
+          nitroCharged: 60,
+          isNitroActive: !!wsData.nitro,
+          stuckTimer: 0,
+          aiTargetNode: 0,
+          aiSpeedFactor: 1,
+          aiAggression: 0.72,
+        };
+        vehicleRenderer.spawnVehicle(carState);
+        const carGroup = vehicleRenderer.carGroupMap.get(carIdKey);
+        if (carGroup) {
+          (window as any).remoteVehicles[remotePid] = carGroup;
+          remoteVehicle = carGroup;
+        }
+      }
+
+      // Task 5: Verify Remote Transform Application
+      console.log("[REMOTE] Update received", remotePid);
+      console.log("[REMOTE] Vehicle exists", !!remoteVehicle);
+      console.log("[REMOTE] Applying position", wsData.position);
+      console.log("[REMOTE] Applying rotation", wsData.rotation);
+
+      // Task 8: Add logs
+      console.log("Vehicle update received", remotePid);
+      console.log("Applying transform", wsData.position);
+      console.log("Remote vehicle found", remoteVehicle);
+
+      // Task 3 & 7: Every vehicle_update must execute set on position and quaternion
+      if (remoteVehicle && wsData.position) {
+        remoteVehicle.position.set(
+          wsData.position.x,
+          wsData.position.y,
+          wsData.position.z
+        );
+        if (wsData.rotation) {
+          remoteVehicle.quaternion.set(
+            wsData.rotation.x,
+            wsData.rotation.y,
+            wsData.rotation.z,
+            wsData.rotation.w
+          );
+        }
+      }
+
+      setCars((prevCars) => {
+        const hasCar = prevCars.some((car) => {
+          const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
+          return netId === remotePid;
+        });
+
+        if (!hasCar) {
+          const pInfo = mp.room?.players?.find((p: any) => (p.uid || p.id) === remotePid);
+          const rawCid = getCarIdString(wsData.carId || pInfo?.carId || "ferrari");
+          const baseCarId = rawCid.toLowerCase().includes("porsche")
+            ? "porsche"
+            : rawCid.toLowerCase().includes("bugatti")
+              ? "bugatti"
+              : "ferrari";
+
+          const newCar: CarState = {
+            id: `remote_${remotePid}`,
+            name: wsData.playerName || wsData.name || pInfo?.playerName || pInfo?.name || "Driver",
+            isAI: false,
+            color: wsData.carColor || pInfo?.carColor || "#0062ff",
+            carId: baseCarId,
+            position: { x: wsData.position?.x ?? 0, y: wsData.position?.y ?? 0, z: wsData.position?.z ?? 0 },
+            velocity: { x: wsData.velocity?.x ?? 0, y: wsData.velocity?.y ?? 0, z: wsData.velocity?.z ?? 0 },
+            speed: wsData.speed ?? 0,
+            angle: angle,
+            angularVelocity: 0,
+            driftFactor: 0,
+            isDrifting: !!wsData.drift,
+            currentLap: wsData.lap ?? 1,
+            currentCheckpointIndex: wsData.checkpoint ?? 0,
+            distanceToNextCheckpoint: 999,
+            racePosition: prevCars.length + 1,
+            totalDistanceTraveled: wsData.totalDistanceTraveled ?? 0,
+            isFinished: !!wsData.isFinished,
+            lastActiveTime: Date.now(),
+            nitroCharged: 60,
+            isNitroActive: !!wsData.nitro,
+            stuckTimer: 0,
+            aiTargetNode: 0,
+            aiSpeedFactor: 1,
+            aiAggression: 0.72,
+          };
+
+          // Set targets for interpolation immediately
+          newCar.targetPosition = { ...newCar.position };
+          newCar.targetVelocity = { ...newCar.velocity };
+          newCar.targetAngle = newCar.angle;
+          newCar.targetSpeed = newCar.speed;
+          newCar.targetIsDrifting = newCar.isDrifting;
+          newCar.targetIsNitroActive = newCar.isNitroActive;
+
+          console.log(`[WS CLIENT] Dynamically spawning remote car state for player ${remotePid}`);
+          return [...prevCars, newCar];
+        }
+
+        return prevCars.map((car) => {
+          const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
+          if (netId === remotePid) {
+            const rawCid = getCarIdString(netPlayerShape.carId || car.carId);
+            car.carId = rawCid.toLowerCase().includes("porsche")
+              ? "porsche"
+              : rawCid.toLowerCase().includes("bugatti")
+                ? "bugatti"
+                : "ferrari";
+            SyncManager.unpackCarState(car, netPlayerShape);
+            car.position = { ...netPlayerShape.position };
+            car.quaternion = netPlayerShape.quaternion;
+          }
+          return car;
+        });
+      });
+    }
 
     return () => {
       disconnectSocket();
@@ -1294,16 +1318,9 @@ export const RaceScene: React.FC = () => {
           : rawCid.toLowerCase().includes("bugatti")
             ? "bugatti"
             : "ferrari";
-        // Position/rotation/velocity are intentionally NOT synced here.
-        // The WebSocket vehicleUpdate handler (connectVehicleSocket's onRemoteUpdate
-        // callback below) is the single authoritative source for remote transforms,
-        // pushed at 20Hz with low latency. This handleTickUpdate runs on every
-        // rendered frame (~60Hz) and previously called SyncManager.unpackCarState()
-        // here too, using remotePlayersMapRef data that can also come from the much
-        // slower/laggier Firestore player-list listener. That meant the stale
-        // Firestore position was reasserted on nearly every frame, overwriting the
-        // fresh WebSocket position moments after it was set, which froze remote
-        // cars near their last Firestore snapshot instead of their live position.
+        if (netPlayer.position) {
+          SyncManager.unpackCarState(car, netPlayer);
+        }
       }
       return car;
     });
