@@ -153,15 +153,6 @@ export class VehicleRenderer {
       carGroup.position.z = c.position.z;
       carGroup.rotation.y = c.angle;
 
-      if (c.id !== "player" && !c.isAI) {
-        console.log(
-          `APPLY POSITION\n` +
-          `remotePlayerId: ${c.id.replace("remote_", "")}\n` +
-          `position: ${c.position.x}, ${c.position.y}, ${c.position.z}\n` +
-          `rotation: ${c.angle}`
-        );
-      }
-
       const controls = c.id === "player" ? playerControls : this._dummyControls;
       if (c.id !== "player") {
         const steerOffsetVal = THREE.MathUtils.clamp(

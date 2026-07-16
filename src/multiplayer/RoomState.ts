@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type RoomStatus = "waiting" | "preparing" | "countdown" | "racing" | "finished" | "archived" | "closed" | "complete";
+export type RoomStatus = "waiting" | "countdown" | "racing" | "finished" | "archived" | "closed" | "complete";
 
 export interface RoomPlayer {
   uid: string;

@@ -5,15 +5,7 @@
 
 import { WebSocket, WebSocketServer } from "ws";
 import { Server } from "http";
-import fs from "fs";
-import path from "path";
 import { RoomCodeGenerator } from "./RoomCodeGenerator";
-
-const logServerMsg = (msg: string) => {
-  try {
-    fs.appendFileSync(path.join(process.cwd(), "app_server_debug.log"), `[${new Date().toISOString()}] ${msg}\n`);
-  } catch (err) {}
-};
 
 export interface ServerPlayer {
   id: string;
@@ -55,13 +47,12 @@ const roomsData = new Map<string, ServerRoom>();
 const socketToRoomMap = new Map<WebSocket, { roomCode: string; playerId: string }>();
 
 // Broadcaster helper
-function broadcastToRoom(room: ServerRoom, payload: any, excludeSocket?: WebSocket) {
+function broadcastToRoom(room: ServerRoom, payload: any) {
   const jsonEncoded = JSON.stringify(payload);
   for (const [playerId, player] of room.players.entries()) {
     if (player.isAI) continue;
     // We send payload to socket of player
     for (const [socket, info] of socketToRoomMap.entries()) {
-      if (socket === excludeSocket) continue;
       if (info.roomCode === room.code && info.playerId === playerId) {
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(jsonEncoded);
@@ -89,23 +80,16 @@ function serializeRoom(room: ServerRoom) {
  * Attaches real-time WebSocket capabilities into Express/HTTP Server
  */
 export function setupMultiplayerWebSocket(server: Server) {
-  const wss = new WebSocketServer({ server, path: "/ws" });
-
-  server.on("upgrade", (req, socket, head) => {
-    logServerMsg(`HTTP Upgrade requested for URL: ${req.url} (Host: ${req.headers.host}, Origin: ${req.headers.origin})`);
-  });
+  const wss = new WebSocketServer({ server });
 
   wss.on("error", (err) => {
     console.error("[Multiplayer Server] WebSocketServer error occurred:", err);
-    logServerMsg(`WebSocketServer error: ${err.message}`);
   });
 
   console.log("[Multiplayer Server] Initiated dynamic WebSocket service on port 3000.");
-  logServerMsg("WebSocketServer started and listening on /ws");
 
-  wss.on("connection", (ws, req) => {
+  wss.on("connection", (ws) => {
     console.log("[Multiplayer Server] New remote player connected.");
-    logServerMsg(`New WebSocket connection accepted from ${req.socket.remoteAddress}. Headers: ${JSON.stringify(req.headers)}`);
 
     ws.on("message", (message) => {
       try {
@@ -115,9 +99,9 @@ export function setupMultiplayerWebSocket(server: Server) {
 
         switch (type) {
           case "CREATE_ROOM": {
-            const { playerName, selectedCar, carColor, difficulty, selectedMap, isLiveMode, playerId: customPlayerId } = payload;
+            const { playerName, selectedCar, carColor, difficulty, selectedMap, isLiveMode } = payload;
             const code = RoomCodeGenerator.generate();
-            const playerId = customPlayerId || "host_" + Math.random().toString(36).substring(2, 8);
+            const playerId = "host_" + Math.random().toString(36).substring(2, 8);
 
             const newRoom: ServerRoom = {
               code,
@@ -162,7 +146,7 @@ export function setupMultiplayerWebSocket(server: Server) {
           }
 
           case "JOIN_ROOM": {
-            const { roomCode, playerName, selectedCar, carColor, playerId: customPlayerId } = payload;
+            const { roomCode, playerName, selectedCar, carColor } = payload;
             const cleanCode = (roomCode || "").toUpperCase().trim();
             const room = roomsData.get(cleanCode);
 
@@ -176,10 +160,7 @@ export function setupMultiplayerWebSocket(server: Server) {
               return;
             }
 
-            const playerId = customPlayerId || "player_" + Math.random().toString(36).substring(2, 8);
-            const playerAlreadyInRoom = room.players.has(playerId);
-
-            if (room.phase !== "lobby" && !playerAlreadyInRoom) {
+            if (room.phase !== "lobby") {
               ws.send(
                 JSON.stringify({
                   type: "ERROR",
@@ -189,32 +170,30 @@ export function setupMultiplayerWebSocket(server: Server) {
               return;
             }
 
-            if (!playerAlreadyInRoom) {
-              // Count existing human players (max 5 humans allowed)
-              const humanCount = Array.from(room.players.values()).filter((p) => !p.isAI).length;
-              if (humanCount >= 5) {
-                ws.send(
-                  JSON.stringify({
-                    type: "ERROR",
-                    payload: { message: "Lobby is full! Maximum 5 human players reached." },
-                  }),
-                );
-                return;
-              }
-
-              const joinedPlayer: ServerPlayer = {
-                id: playerId,
-                name: playerName || "Challenger",
-                selectedCar: (selectedCar as any) || "ferrari",
-                carColor: carColor || "#00ffcc",
-                ready: room.isLiveMode ? true : false, // Autoready in live mode
-                isHost: false,
-                isAI: false,
-              };
-
-              room.players.set(playerId, joinedPlayer);
+            // Count existing human players (max 5 humans allowed)
+            const humanCount = Array.from(room.players.values()).filter((p) => !p.isAI).length;
+            if (humanCount >= 5) {
+              ws.send(
+                JSON.stringify({
+                  type: "ERROR",
+                  payload: { message: "Lobby is full! Maximum 5 human players reached." },
+                }),
+              );
+              return;
             }
 
+            const playerId = "player_" + Math.random().toString(36).substring(2, 8);
+            const joinedPlayer: ServerPlayer = {
+              id: playerId,
+              name: playerName || "Challenger",
+              selectedCar: (selectedCar as any) || "ferrari",
+              carColor: carColor || "#00ffcc",
+              ready: room.isLiveMode ? true : false, // Autoready in live mode
+              isHost: false,
+              isAI: false,
+            };
+
+            room.players.set(playerId, joinedPlayer);
             socketToRoomMap.set(ws, { roomCode: cleanCode, playerId });
 
             ws.send(
@@ -290,21 +269,13 @@ export function setupMultiplayerWebSocket(server: Server) {
                 player.finishTime = payload.finishTime;
               }
 
-              // Log BROADCAST precisely as requested by user
-              console.log(
-                `BROADCAST\n` +
-                `senderPlayerId: ${socketInfo.playerId}\n` +
-                `roomCode: ${room.code}\n` +
-                `position: ${JSON.stringify(payload.position)}`
-              );
-
-              // Fast forwarding states update to everyone else in real-time (excluding sender)
+              // Fast forwarding states update to everyone else in real-time
               broadcastToRoom(room, {
                 type: "SYNC_STATE",
                 payload: {
                   players: Array.from(room.players.values()),
                 },
-              }, ws);
+              });
             }
             break;
           }

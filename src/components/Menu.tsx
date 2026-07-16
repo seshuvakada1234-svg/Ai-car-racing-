@@ -651,7 +651,7 @@ export const Menu: React.FC<MenuProps> = ({ onStartGame, onCreateRoom, onJoinRoo
         return;
       }
       setSyncedRoom(room);
-      if (room.status === "preparing" || room.status === "countdown" || room.status === "racing") {
+      if (room.status === "racing") {
         navigate(`/race/${cleanCode}`);
       }
     });

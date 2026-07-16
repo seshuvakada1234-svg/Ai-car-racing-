@@ -498,9 +498,9 @@ export const WaitingLobbyPage: React.FC = () => {
     return () => clearInterval(interval);
   }, [room?.status, allReady, isHost, navigate, normalizedCode, localSecondsLeft]);
 
-  // Redirect to active race if state updates to preparing, countdown or racing
+  // Redirect to active race if state updates to racing
   useEffect(() => {
-    if (room?.status === "preparing" || room?.status === "countdown" || room?.status === "racing") {
+    if (room?.status === "racing") {
       navigate(`/race/${normalizedCode}`);
     }
   }, [room?.status, navigate, normalizedCode]);
@@ -702,7 +702,7 @@ export const WaitingLobbyPage: React.FC = () => {
             <button
               onClick={() => {
                 if (allPlayersReady) {
-                  NormalRoomService.setRoomStatus(normalizedCode, "preparing");
+                  NormalRoomService.setRoomStatus(normalizedCode, "racing");
                 }
               }}
               disabled={!allPlayersReady}
