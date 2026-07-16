@@ -1,0 +1,57 @@
+name: Deploy Cloudflare Worker
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Cloudflare Workers
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Cloudflare Secrets
+        run: |
+          HAS_ERRORS=0
+          if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is not defined in GitHub repository secrets. Deployment will fail."
+            HAS_ERRORS=1
+          fi
+          if [ -z "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID is not defined in GitHub repository secrets. Deployment will fail."
+            HAS_ERRORS=1
+          fi
+          if [ $HAS_ERRORS -eq 1 ]; then
+            exit 1
+          fi
+          echo "GitHub repository secrets successfully verified."
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: cloudflare-worker
+        run: npm install
+
+      - name: Verify Wrangler Configuration
+        working-directory: cloudflare-worker
+        run: |
+          if [ ! -f wrangler.jsonc ]; then
+            echo "::error::wrangler.jsonc configuration file is missing in cloudflare-worker directory."
+            exit 1
+          fi
+          echo "wrangler.jsonc found."
+
+      - name: Deploy to Cloudflare Workers
+        working-directory: cloudflare-worker
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
