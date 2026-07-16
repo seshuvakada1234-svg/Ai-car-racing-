@@ -56,7 +56,7 @@ To configure Durable Objects, the following declarations must exist in your `wra
   "migrations": [
     {
       "tag": "v1",
-      "new_classes": ["RoomDurableObject"]
+      "new_sqlite_classes": ["RoomDurableObject"]
     }
   ]
 }

@@ -53,7 +53,7 @@ The Durable Object class is bound to the `VEHICLE_ROOM` namespace inside `wrangl
 "migrations": [
   {
     "tag": "v1",
-    "new_classes": ["RoomDurableObject"]
+    "new_sqlite_classes": ["RoomDurableObject"]
   }
 ]
 ```
