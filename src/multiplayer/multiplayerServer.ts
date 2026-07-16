@@ -5,7 +5,15 @@
 
 import { WebSocket, WebSocketServer } from "ws";
 import { Server } from "http";
+import fs from "fs";
+import path from "path";
 import { RoomCodeGenerator } from "./RoomCodeGenerator";
+
+const logServerMsg = (msg: string) => {
+  try {
+    fs.appendFileSync(path.join(process.cwd(), "app_server_debug.log"), `[${new Date().toISOString()}] ${msg}\n`);
+  } catch (err) {}
+};
 
 export interface ServerPlayer {
   id: string;
@@ -83,14 +91,21 @@ function serializeRoom(room: ServerRoom) {
 export function setupMultiplayerWebSocket(server: Server) {
   const wss = new WebSocketServer({ server, path: "/ws" });
 
+  server.on("upgrade", (req, socket, head) => {
+    logServerMsg(`HTTP Upgrade requested for URL: ${req.url} (Host: ${req.headers.host}, Origin: ${req.headers.origin})`);
+  });
+
   wss.on("error", (err) => {
     console.error("[Multiplayer Server] WebSocketServer error occurred:", err);
+    logServerMsg(`WebSocketServer error: ${err.message}`);
   });
 
   console.log("[Multiplayer Server] Initiated dynamic WebSocket service on port 3000.");
+  logServerMsg("WebSocketServer started and listening on /ws");
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
     console.log("[Multiplayer Server] New remote player connected.");
+    logServerMsg(`New WebSocket connection accepted from ${req.socket.remoteAddress}. Headers: ${JSON.stringify(req.headers)}`);
 
     ws.on("message", (message) => {
       try {
