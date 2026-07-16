@@ -1,0 +1,17 @@
+{
+  "name": "racing-game-vehicle-relay",
+  "version": "1.0.0",
+  "description": "Cloudflare Workers + Durable Objects low-latency real-time multiplayer vehicle coordinate relay",
+  "main": "worker.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241218.0",
+    "typescript": "^5.3.3",
+    "wrangler": "^3.99.0"
+  },
+  "private": true
+}
