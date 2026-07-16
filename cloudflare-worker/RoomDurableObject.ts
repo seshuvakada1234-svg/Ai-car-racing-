@@ -1,4 +1,4 @@
-import { Env, WsPacket } from "./types";
+import { Env } from "./types";
 
 /**
  * RoomDurableObject is an in-memory, high-performance WebSocket relay room
@@ -8,16 +8,26 @@ import { Env, WsPacket } from "./types";
 export class RoomDurableObject {
   state: DurableObjectState;
   env: Env;
-  sessions: Map<string, WebSocket>;
+  
+  // Requirement 4: clients collection
+  clients: Map<string, { ws: WebSocket; playerId: string }>;
   latestStates: Map<string, any>;
   raceStartTime: number | null;
+  
+  // Requirement 3: room.players list
+  room: {
+    players: string[];
+  };
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
-    this.sessions = new Map();
+    this.clients = new Map();
     this.latestStates = new Map();
     this.raceStartTime = null;
+    this.room = {
+      players: []
+    };
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -30,7 +40,7 @@ export class RoomDurableObject {
     }
 
     const upgradeHeader = request.headers.get("Upgrade");
-    if (!upgradeHeader || upgradeHeader !== "websocket") {
+    if (!upgradeHeader || upgradeHeader.toLowerCase() !== "websocket") {
       return new Response("Durable Object expected a WebSocket connection", { status: 426 });
     }
 
@@ -41,24 +51,34 @@ export class RoomDurableObject {
     server.accept();
 
     // If this player already has an open socket, close the previous one
-    const oldSocket = this.sessions.get(playerId);
-    if (oldSocket) {
+    const oldClient = this.clients.get(playerId);
+    if (oldClient) {
       try {
-        oldSocket.close(1000, "Replaced by new connection");
+        oldClient.ws.close(1000, "Replaced by new connection");
       } catch (e) {}
     }
-    
-    // Store connection in-memory
-    this.sessions.set(playerId, server);
-    console.log(`[Durable Object] Player joined: ${playerId} in room ${roomCode}. Active players: ${this.sessions.size}`);
 
-    // Send complete current player list and their latest coordinates to the newly joined player
-    const currentPlayers = Array.from(this.sessions.keys());
+    // Store connection in-memory in our clients collection
+    this.clients.set(playerId, { ws: server, playerId });
+
+    // Requirement 3: Add player to room.players
+    if (!this.room.players.includes(playerId)) {
+      this.room.players.push(playerId);
+    }
+
+    // Requirement 8: Debug Logging - Player joined, Room code, Players in room
+    console.log(`[Durable Object] Player joined: ${playerId}`);
+    console.log(`Room code: ${roomCode}`);
+    console.log(`Players in room: ${this.room.players.length}`);
+    console.log(`Room ${roomCode}`);
+    console.log(`Players: ${this.room.players.length}`);
+
+    // Requirement 3: Send complete player list to the new player
     try {
       server.send(
         JSON.stringify({
           type: "player_list",
-          players: currentPlayers,
+          players: this.room.players,
           latestStates: Object.fromEntries(this.latestStates.entries())
         })
       );
@@ -66,11 +86,11 @@ export class RoomDurableObject {
       console.error(`[Durable Object] Failed to send player_list to joining player ${playerId}:`, err);
     }
 
-    // Broadcast playerJoined / player_join to all other players in the room
+    // Requirement 3: Broadcast player_join to every existing player
     this.broadcast({ type: "playerJoined", playerId }, playerId);
     this.broadcast({ type: "player_join", playerId }, playerId);
 
-    // If the race has already been started and countdown is active/recent, share it
+    // If the race has already been started, share it with the joining player
     if (this.raceStartTime && this.raceStartTime > Date.now() - 30000) {
       try {
         server.send(
@@ -97,26 +117,38 @@ export class RoomDurableObject {
           // Ensure the playerId is populated correctly
           msg.playerId = playerId;
 
-          // Store newest state
+          // Requirement 8: Debug Logging - Vehicle update received
+          console.log(`[Durable Object] Vehicle update received from ${playerId}`);
+
+          // Requirement 4: Store latest transform
           this.latestStates.set(playerId, msg);
 
-          // Broadcast to every OTHER socket in the room (raw packet broadcast)
+          // Requirement 4: Broadcast immediately to every other client
           let broadcastTo = 0;
-          for (const [pid, socket] of this.sessions.entries()) {
-            if (pid !== playerId) {
+          for (const client of this.clients.values()) {
+            if (client.ws !== server) {
               try {
-                socket.send(event.data);
+                client.ws.send(event.data);
                 broadcastTo++;
               } catch (err) {
-                console.error(`[Durable Object] Error sending to player ${pid}:`, err);
+                console.error(`[Durable Object] Error sending to player ${client.playerId}:`, err);
               }
             }
           }
+
+          // Requirement 8: Debug Logging - Vehicle update broadcast
+          console.log(`[Durable Object] Vehicle update broadcast to ${broadcastTo} client(s)`);
+          console.log(`Room ${roomCode}`);
+          console.log(`Players: ${this.room.players.length}`);
+          console.log(`Broadcast vehicle_update to ${broadcastTo} client`);
+
         } else if (msg.type === "start_race" || msg.type === "countdown" || msg.type === "race_start") {
-          // Server-authoritative race countdown start
-          console.log(`[Durable Object] Start race countdown triggered by ${playerId} in room ${roomCode}`);
+          // Requirement 5: The Durable Object is the only authority
           const raceStartTime = Date.now() + 5000;
           this.raceStartTime = raceStartTime;
+
+          // Requirement 8: Debug Logging - Race started
+          console.log(`[Durable Object] Race started in room ${roomCode} at ${raceStartTime}`);
 
           // Broadcast race_start to ALL players (including sender!)
           this.broadcast({
@@ -145,25 +177,29 @@ export class RoomDurableObject {
   }
 
   private handleDisconnect(playerId: string, socket: WebSocket, roomCode: string) {
-    const currentSocket = this.sessions.get(playerId);
-    if (currentSocket === socket) {
-      this.sessions.delete(playerId);
+    const currentClient = this.clients.get(playerId);
+    if (currentClient && currentClient.ws === socket) {
+      // Requirement 6 & 8: Remove player and log disconnected
+      this.clients.delete(playerId);
       this.latestStates.delete(playerId);
+      this.room.players = this.room.players.filter((p) => p !== playerId);
       
-      // Broadcast leave signals to all other clients
+      console.log(`[Durable Object] Player disconnected: ${playerId}`);
+      console.log(`Room ${roomCode}`);
+      console.log(`Players in room: ${this.room.players.length}`);
+
+      // Requirement 6: Broadcast player_leave
       this.broadcast({ type: "playerLeft", playerId }, playerId);
       this.broadcast({ type: "player_leave", playerId }, playerId);
-      
-      console.log(`[Durable Object] Player left: ${playerId} from room ${roomCode}. Active players left: ${this.sessions.size}`);
     }
   }
 
   private broadcast(msg: any, excludePlayerId?: string) {
     const payload = JSON.stringify(msg);
-    for (const [pid, socket] of this.sessions.entries()) {
+    for (const [pid, client] of this.clients.entries()) {
       if (pid !== excludePlayerId) {
         try {
-          socket.send(payload);
+          client.ws.send(payload);
         } catch (err) {
           console.error(`[Durable Object] Broadcast failure to player ${pid}:`, err);
         }
@@ -171,4 +207,3 @@ export class RoomDurableObject {
     }
   }
 }
-

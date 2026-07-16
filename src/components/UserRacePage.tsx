@@ -1057,7 +1057,9 @@ export const RaceScene: React.FC = () => {
           totalDistanceTraveled: wsData.totalDistanceTraveled,
           isFinished: !!wsData.isFinished,
           steerValue: wsData.steering ?? 0,
-          wheelRotation: wsData.wheelRotation ?? 0
+          wheelRotation: wsData.wheelRotation ?? 0,
+          carId: wsData.carId,
+          playerName: wsData.playerName || wsData.name
         };
 
         // Put this data in remotePlayersMapRef so our standard loop can read it as fallback,
@@ -1065,6 +1067,60 @@ export const RaceScene: React.FC = () => {
         remotePlayersMapRef.current.set(remotePid, netPlayerShape);
 
         setCars((prevCars) => {
+          const hasCar = prevCars.some((car) => {
+            const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
+            return netId === remotePid;
+          });
+
+          if (!hasCar) {
+            const pInfo = mp.room?.players?.find((p: any) => (p.uid || p.id) === remotePid);
+            const rawCid = getCarIdString(wsData.carId || pInfo?.carId || "ferrari");
+            const baseCarId = rawCid.toLowerCase().includes("porsche")
+              ? "porsche"
+              : rawCid.toLowerCase().includes("bugatti")
+                ? "bugatti"
+                : "ferrari";
+
+            const newCar: CarState = {
+              id: `remote_${remotePid}`,
+              name: wsData.playerName || wsData.name || pInfo?.playerName || pInfo?.name || "Driver",
+              isAI: false,
+              color: wsData.carColor || pInfo?.carColor || "#0062ff",
+              carId: baseCarId,
+              position: { x: wsData.position?.x ?? 0, y: wsData.position?.y ?? 0, z: wsData.position?.z ?? 0 },
+              velocity: { x: wsData.velocity?.x ?? 0, y: wsData.velocity?.y ?? 0, z: wsData.velocity?.z ?? 0 },
+              speed: wsData.speed ?? 0,
+              angle: angle,
+              angularVelocity: 0,
+              driftFactor: 0,
+              isDrifting: !!wsData.drift,
+              currentLap: wsData.lap ?? 1,
+              currentCheckpointIndex: wsData.checkpoint ?? 0,
+              distanceToNextCheckpoint: 999,
+              racePosition: prevCars.length + 1,
+              totalDistanceTraveled: wsData.totalDistanceTraveled ?? 0,
+              isFinished: !!wsData.isFinished,
+              lastActiveTime: Date.now(),
+              nitroCharged: 60,
+              isNitroActive: !!wsData.nitro,
+              stuckTimer: 0,
+              aiTargetNode: 0,
+              aiSpeedFactor: 1,
+              aiAggression: 0.72,
+            };
+
+            // Set targets for interpolation immediately
+            newCar.targetPosition = { ...newCar.position };
+            newCar.targetVelocity = { ...newCar.velocity };
+            newCar.targetAngle = newCar.angle;
+            newCar.targetSpeed = newCar.speed;
+            newCar.targetIsDrifting = newCar.isDrifting;
+            newCar.targetIsNitroActive = newCar.isNitroActive;
+
+            console.log(`[WS CLIENT] Dynamically spawning remote car for player ${remotePid}`);
+            return [...prevCars, newCar];
+          }
+
           return prevCars.map((car) => {
             const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
             if (netId === remotePid) {
@@ -1098,7 +1154,7 @@ export const RaceScene: React.FC = () => {
     return () => {
       disconnectSocket();
     };
-  }, [mp.room?.roomCode, mp.playerId]);
+  }, [mp.room?.roomCode, mp.playerId, mp.room?.players]);
 
   // Callback triggered inside the canvas animation frames
   const handleTickUpdate = (updatedCars: CarState[]) => {
@@ -1125,7 +1181,7 @@ export const RaceScene: React.FC = () => {
       if (car.id === "player") return true;
       if (car.isAI) return true;
       const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
-      return activeUids.has(netId);
+      return activeUids.has(netId) || remotePlayersMapRef.current.has(netId);
     });
 
     const nextCars = filteredCars.map((car) => {
