@@ -1294,9 +1294,16 @@ export const RaceScene: React.FC = () => {
           : rawCid.toLowerCase().includes("bugatti")
             ? "bugatti"
             : "ferrari";
-        if (netPlayer.position) {
-          SyncManager.unpackCarState(car, netPlayer);
-        }
+        // Position/rotation/velocity are intentionally NOT synced here.
+        // The WebSocket vehicleUpdate handler (connectVehicleSocket's onRemoteUpdate
+        // callback below) is the single authoritative source for remote transforms,
+        // pushed at 20Hz with low latency. This handleTickUpdate runs on every
+        // rendered frame (~60Hz) and previously called SyncManager.unpackCarState()
+        // here too, using remotePlayersMapRef data that can also come from the much
+        // slower/laggier Firestore player-list listener. That meant the stale
+        // Firestore position was reasserted on nearly every frame, overwriting the
+        // fresh WebSocket position moments after it was set, which froze remote
+        // cars near their last Firestore snapshot instead of their live position.
       }
       return car;
     });
