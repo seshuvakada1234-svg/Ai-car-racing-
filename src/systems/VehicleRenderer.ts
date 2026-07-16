@@ -149,9 +149,20 @@ export class VehicleRenderer {
       const carGroup = this.carGroupMap.get(c.id);
       if (!carGroup) return;
 
-      carGroup.position.x = c.position.x;
-      carGroup.position.z = c.position.z;
-      carGroup.rotation.y = c.angle;
+      if (c.id !== "player" && !c.isAI) {
+        if (c.position) {
+          carGroup.position.set(c.position.x, c.position.y, c.position.z);
+        }
+        if (c.quaternion) {
+          carGroup.quaternion.set(c.quaternion.x, c.quaternion.y, c.quaternion.z, c.quaternion.w);
+        } else {
+          carGroup.rotation.y = c.angle;
+        }
+      } else {
+        carGroup.position.x = c.position.x;
+        carGroup.position.z = c.position.z;
+        carGroup.rotation.y = c.angle;
+      }
 
       const controls = c.id === "player" ? playerControls : this._dummyControls;
       if (c.id !== "player") {
@@ -204,86 +215,100 @@ export class VehicleRenderer {
       if (gltfAsset) {
         // ── GLTF path ──────────────────────────────────────────────────────────
 
-        CarAnimator.animateChassis(c, carGroup, gltfAsset.wheelSystem, controls, elapsedSec, runningTime);
+        if (c.id === "player" || c.isAI) {
+          CarAnimator.animateChassis(c, carGroup, gltfAsset.wheelSystem, controls, elapsedSec, runningTime);
 
-        // Renderer owns chassis Y. Keep modelRoot at its native local origin so
-        // wheel pivots — which live in modelRoot local space at their original
-        // GLB positions — stay rigidly attached to the chassis.
-        gltfAsset.model.position.y = 0;
-        gltfAsset.model.updateMatrixWorld(true);
+          // Renderer owns chassis Y. Keep modelRoot at its native local origin so
+          // wheel pivots — which live in modelRoot local space at their original
+          // GLB positions — stay rigidly attached to the chassis.
+          gltfAsset.model.position.y = 0;
+          gltfAsset.model.updateMatrixWorld(true);
 
-        const wheels = [
-          gltfAsset.wheelSystem.frontLeft,
-          gltfAsset.wheelSystem.frontRight,
-          gltfAsset.wheelSystem.rearLeft,
-          gltfAsset.wheelSystem.rearRight,
-        ];
+          const wheels = [
+            gltfAsset.wheelSystem.frontLeft,
+            gltfAsset.wheelSystem.frontRight,
+            gltfAsset.wheelSystem.rearLeft,
+            gltfAsset.wheelSystem.rearRight,
+          ];
 
-        const scaleX = gltfAsset.model.scale.x * carGroup.scale.x;
-        const scaleY = gltfAsset.model.scale.y * carGroup.scale.y;
-        const scaleZ = gltfAsset.model.scale.z * carGroup.scale.z;
+          const scaleX = gltfAsset.model.scale.x * carGroup.scale.x;
+          const scaleY = gltfAsset.model.scale.y * carGroup.scale.y;
+          const scaleZ = gltfAsset.model.scale.z * carGroup.scale.z;
 
-        // ── Gather per-wheel ground data ─────────────────────────────────────
-        const wheelData = wheels.map((assembly) => {
-          if (!assembly) return null;
+          // ── Gather per-wheel ground data ─────────────────────────────────────
+          const wheelData = wheels.map((assembly) => {
+            if (!assembly) return null;
 
-          const localX = assembly.initialLocalPos.x * scaleX;
-          const localZ = assembly.initialLocalPos.z * scaleZ;
+            const localX = assembly.initialLocalPos.x * scaleX;
+            const localZ = assembly.initialLocalPos.z * scaleZ;
 
-          const cosA = Math.cos(c.angle);
-          const sinA = Math.sin(c.angle);
-          const worldX = c.position.x + localX * cosA + localZ * sinA;
-          const worldZ = c.position.z - localX * sinA + localZ * cosA;
+            const cosA = Math.cos(c.angle);
+            const sinA = Math.sin(c.angle);
+            const worldX = c.position.x + localX * cosA + localZ * sinA;
+            const worldZ = c.position.z - localX * sinA + localZ * cosA;
 
-          const wheelGroundY = this.getGroundHeight(worldX, worldZ, terrainManager, c.position.y);
-          const worldRadius = assembly.wheelRadius * scaleY;
-          const wheelCenterWorldY = wheelGroundY + worldRadius;
-          // Chassis Y that would put this wheel's mount exactly at the tyre centre.
-          const mountAlignedChassisY = wheelCenterWorldY - assembly.initialLocalPos.y * scaleY;
+            const wheelGroundY = this.getGroundHeight(worldX, worldZ, terrainManager, c.position.y);
+            const worldRadius = assembly.wheelRadius * scaleY;
+            const wheelCenterWorldY = wheelGroundY + worldRadius;
+            // Chassis Y that would put this wheel's mount exactly at the tyre centre.
+            const mountAlignedChassisY = wheelCenterWorldY - assembly.initialLocalPos.y * scaleY;
 
-          return { assembly, wheelCenterWorldY, mountAlignedChassisY };
-        });
+            return { assembly, wheelCenterWorldY, mountAlignedChassisY };
+          });
 
-        // Chassis Y = average of per-wheel mount-aligned targets + body lift.
-        const validData = wheelData.filter(Boolean) as NonNullable<(typeof wheelData)[number]>[];
-        let chassisWorldY: number;
-        if (validData.length > 0) {
-          chassisWorldY =
-            validData.reduce((sum, d) => sum + d.mountAlignedChassisY, 0) / validData.length + BODY_OFFSET;
+          // Chassis Y = average of per-wheel mount-aligned targets + body lift.
+          const validData = wheelData.filter(Boolean) as NonNullable<(typeof wheelData)[number]>[];
+          let chassisWorldY: number;
+          if (validData.length > 0) {
+            chassisWorldY =
+              validData.reduce((sum, d) => sum + d.mountAlignedChassisY, 0) / validData.length + BODY_OFFSET;
+          } else {
+            chassisWorldY =
+              this.getGroundHeight(c.position.x, c.position.z, terrainManager, c.position.y) + BODY_OFFSET;
+          }
+
+          // Never let chassis sink below road centre
+          const roadHeightAtCenter = this.getGroundHeight(c.position.x, c.position.z, terrainManager, c.position.y);
+          if (chassisWorldY < roadHeightAtCenter) chassisWorldY = roadHeightAtCenter;
+
+          // VehicleRenderer is the SOLE owner of carGroup.position.y
+          carGroup.position.y = chassisWorldY;
+
+          // ── Per-wheel suspension compression (tiny delta around mount) ───────
+          wheelData.forEach((data) => {
+            if (!data) return;
+            const { assembly, wheelCenterWorldY } = data;
+
+            // Mount point world Y, accounting for chassis pitch/roll via yaw-only
+            // approximation (small-angle, matches existing convention).
+            const offsetVec = this._scratchOffsetVec.copy(assembly.initialLocalPos);
+            offsetVec.x *= scaleX;
+            offsetVec.y *= scaleY;
+            offsetVec.z *= scaleZ;
+            offsetVec.applyAxisAngle(_yawAxis, c.angle);
+
+            const mountPointWorldY = chassisWorldY + offsetVec.y;
+
+            let localDisplacementY = (wheelCenterWorldY - mountPointWorldY) / scaleY;
+            const localMaxTravel = 0.12;
+            localDisplacementY = THREE.MathUtils.clamp(localDisplacementY, -localMaxTravel, localMaxTravel);
+
+            // VehicleRenderer is the SOLE writer of suspensionPivot.position
+            assembly.suspensionPivot.position.set(0, localDisplacementY, 0);
+          });
         } else {
-          chassisWorldY =
-            this.getGroundHeight(c.position.x, c.position.z, terrainManager, c.position.y) + BODY_OFFSET;
+          // For remote cars, we only update wheels' rotation/spin without modifying carGroup's master rotation/Y-position
+          if (gltfAsset.wheelSystem) {
+            const steerOffset = THREE.MathUtils.clamp(
+              c.steerValue !== undefined ? c.steerValue : c.angularVelocity * 0.4,
+              -0.36,
+              0.36,
+            );
+            const normSteer = steerOffset / 0.36;
+            const suspState = { frontLeft: 0, frontRight: 0, rearLeft: 0, rearRight: 0, bodyRoll: 0, bodyPitch: 0 };
+            gltfAsset.wheelSystem.update(c, normSteer, suspState, elapsedSec);
+          }
         }
-
-        // Never let chassis sink below road centre
-        const roadHeightAtCenter = this.getGroundHeight(c.position.x, c.position.z, terrainManager, c.position.y);
-        if (chassisWorldY < roadHeightAtCenter) chassisWorldY = roadHeightAtCenter;
-
-        // VehicleRenderer is the SOLE owner of carGroup.position.y
-        carGroup.position.y = chassisWorldY;
-
-        // ── Per-wheel suspension compression (tiny delta around mount) ───────
-        wheelData.forEach((data) => {
-          if (!data) return;
-          const { assembly, wheelCenterWorldY } = data;
-
-          // Mount point world Y, accounting for chassis pitch/roll via yaw-only
-          // approximation (small-angle, matches existing convention).
-          const offsetVec = this._scratchOffsetVec.copy(assembly.initialLocalPos);
-          offsetVec.x *= scaleX;
-          offsetVec.y *= scaleY;
-          offsetVec.z *= scaleZ;
-          offsetVec.applyAxisAngle(_yawAxis, c.angle);
-
-          const mountPointWorldY = chassisWorldY + offsetVec.y;
-
-          let localDisplacementY = (wheelCenterWorldY - mountPointWorldY) / scaleY;
-          const localMaxTravel = 0.12;
-          localDisplacementY = THREE.MathUtils.clamp(localDisplacementY, -localMaxTravel, localMaxTravel);
-
-          // VehicleRenderer is the SOLE writer of suspensionPivot.position
-          assembly.suspensionPivot.position.set(0, localDisplacementY, 0);
-        });
 
         // Brake light emissions
         const isBraking = c.id === "player" ? controls.backward : c.speed < 18 && Math.random() > 0.4;
@@ -294,58 +319,60 @@ export class VehicleRenderer {
       } else {
         // ── Procedural fallback ────────────────────────────────────────────────
 
-        const cosA = Math.cos(c.angle);
-        const sinA = Math.sin(c.angle);
+        if (c.id === "player" || c.isAI) {
+          const cosA = Math.cos(c.angle);
+          const sinA = Math.sin(c.angle);
 
-        const flG = this.getGroundHeight(
-          c.position.x + 0.95 * cosA + 1.15 * sinA,
-          c.position.z - 0.95 * sinA + 1.15 * cosA,
-          terrainManager,
-          c.position.y,
-        );
-        const frG = this.getGroundHeight(
-          c.position.x - 0.95 * cosA + 1.15 * sinA,
-          c.position.z + 0.95 * sinA + 1.15 * cosA,
-          terrainManager,
-          c.position.y,
-        );
-        const rlG = this.getGroundHeight(
-          c.position.x + 1.0 * cosA - 1.2 * sinA,
-          c.position.z - 1.0 * sinA - 1.2 * cosA,
-          terrainManager,
-          c.position.y,
-        );
-        const rrG = this.getGroundHeight(
-          c.position.x - 1.0 * cosA - 1.2 * sinA,
-          c.position.z + 1.0 * sinA - 1.2 * cosA,
-          terrainManager,
-          c.position.y,
-        );
-        const avgG = (flG + frG + rlG + rrG) / 4;
+          const flG = this.getGroundHeight(
+            c.position.x + 0.95 * cosA + 1.15 * sinA,
+            c.position.z - 0.95 * sinA + 1.15 * cosA,
+            terrainManager,
+            c.position.y,
+          );
+          const frG = this.getGroundHeight(
+            c.position.x - 0.95 * cosA + 1.15 * sinA,
+            c.position.z + 0.95 * sinA + 1.15 * cosA,
+            terrainManager,
+            c.position.y,
+          );
+          const rlG = this.getGroundHeight(
+            c.position.x + 1.0 * cosA - 1.2 * sinA,
+            c.position.z - 1.0 * sinA - 1.2 * cosA,
+            terrainManager,
+            c.position.y,
+          );
+          const rrG = this.getGroundHeight(
+            c.position.x - 1.0 * cosA - 1.2 * sinA,
+            c.position.z + 1.0 * sinA - 1.2 * cosA,
+            terrainManager,
+            c.position.y,
+          );
+          const avgG = (flG + frG + rlG + rrG) / 4;
 
-        let targetY = avgG + 0.15;
-        const centerG = this.getGroundHeight(c.position.x, c.position.z, terrainManager, c.position.y);
-        if (targetY - 0.15 < centerG + 0.05) targetY = centerG + 0.05 + 0.15;
+          let targetY = avgG + 0.15;
+          const centerG = this.getGroundHeight(c.position.x, c.position.z, terrainManager, c.position.y);
+          if (targetY - 0.15 < centerG + 0.05) targetY = centerG + 0.05 + 0.15;
 
-        // VehicleRenderer is the SOLE writer of carGroup.position.y
-        carGroup.position.y = targetY;
+          // VehicleRenderer is the SOLE writer of carGroup.position.y
+          carGroup.position.y = targetY;
 
-        const speedRatio = Math.min(1.0, Math.abs(c.speed) / 78);
-        const rollTarget = -c.angularVelocity * 0.022 * speedRatio;
-        carGroup.rotation.z = THREE.MathUtils.lerp(carGroup.rotation.z, rollTarget, 10 * elapsedSec);
+          const speedRatio = Math.min(1.0, Math.abs(c.speed) / 78);
+          const rollTarget = -c.angularVelocity * 0.022 * speedRatio;
+          carGroup.rotation.z = THREE.MathUtils.lerp(carGroup.rotation.z, rollTarget, 10 * elapsedSec);
 
-        let pitchTarget = 0;
-        if (c.id === "player") {
-          if (controls.forward) pitchTarget = -0.018 * speedRatio;
-          else if (controls.backward) pitchTarget = 0.026 * speedRatio;
-        } else {
-          pitchTarget = -0.008 * speedRatio;
+          let pitchTarget = 0;
+          if (c.id === "player") {
+            if (controls.forward) pitchTarget = -0.018 * speedRatio;
+            else if (controls.backward) pitchTarget = 0.026 * speedRatio;
+          } else {
+            pitchTarget = -0.008 * speedRatio;
+          }
+          carGroup.rotation.x = THREE.MathUtils.lerp(carGroup.rotation.x, pitchTarget, 8 * elapsedSec);
+
+          // Micro-vibration goes to rotation only, NOT position.y
+          const suspensionVibe = Math.sin(runningTime * 45.0) * 0.006 * speedRatio;
+          carGroup.rotation.x += suspensionVibe * 0.5;
         }
-        carGroup.rotation.x = THREE.MathUtils.lerp(carGroup.rotation.x, pitchTarget, 8 * elapsedSec);
-
-        // Micro-vibration goes to rotation only, NOT position.y
-        const suspensionVibe = Math.sin(runningTime * 45.0) * 0.006 * speedRatio;
-        carGroup.rotation.x += suspensionVibe * 0.5;
 
         let wheelRotationSpeed = c.speed;
         if (c.id === "player" && controls.forward && Math.abs(c.speed) < 15) {
