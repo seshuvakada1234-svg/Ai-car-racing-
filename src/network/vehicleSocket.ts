@@ -142,6 +142,7 @@ export function connectVehicleSocket(
   socket = ws;
 
   ws.onopen = () => {
+    console.log("[WS CLIENT] WebSocket opened");
     console.log("[WS CLIENT] Connection established successfully.");
     try {
       ws.send(
@@ -158,19 +159,25 @@ export function connectVehicleSocket(
   };
 
   ws.onmessage = (event) => {
+    console.log("[WS CLIENT] Every incoming raw WebSocket message:", event.data);
     try {
       const data = JSON.parse(event.data);
+      console.log("[WS CLIENT] Parsed message type:", data.type);
       
       if (data.type === "vehicleUpdate" || data.type === "vehicle_update") {
+        console.log("[WS CLIENT] vehicleUpdate received");
         const { playerId, roomCode } = data;
         if (playerId === activePlayerId) return; // ignore self
         
+        console.log("[WS CLIENT] Broadcast received from playerId:", playerId);
+        console.log("[WS CLIENT] Calling onRemoteUpdate with playerId:", playerId);
         onRemoteUpdate(playerId, data);
         return;
       }
 
       if (data.type === "player_list" || data.type === "playerList") {
-        console.log("[WS] player_list received", data);
+        console.log("[WS CLIENT] player_list received", data);
+        console.log("[WS CLIENT] Calling onRemoteUpdate with empty playerId for player_list");
         onRemoteUpdate("", data);
         return;
       }
@@ -202,11 +209,11 @@ export function connectVehicleSocket(
   };
 
   ws.onerror = (err) => {
-    console.warn("[WS CLIENT] WebSocket bypass channel error (this is normal if WS is restricted; falling back to Firestore):", err);
+    console.error("[WS CLIENT] WebSocket error:", err);
   };
 
-  ws.onclose = () => {
-    console.log("[WS CLIENT] Connection closed.");
+  ws.onclose = (event) => {
+    console.log("[WS CLIENT] WebSocket closed", "code:", event.code, "reason:", event.reason);
     if (socket === ws) {
       socket = null;
     }

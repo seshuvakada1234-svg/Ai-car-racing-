@@ -1044,6 +1044,7 @@ export const RaceScene: React.FC = () => {
       mp.room.roomCode,
       activePlayerId,
       (remotePid, wsData) => {
+        console.log("onRemoteUpdate called", "remotePid:", remotePid, "type:", wsData?.type);
         // Support player_list / playerList messages
         if (!remotePid && (wsData.type === "player_list" || wsData.type === "playerList")) {
           console.log("[WS] player_list received", wsData);
@@ -1060,6 +1061,7 @@ export const RaceScene: React.FC = () => {
 
         if (remotePid) {
           handleSinglePlayerUpdate(remotePid, wsData);
+          console.log("Remote state updated", "playerId:", remotePid);
         }
       },
       (leftPid) => {
@@ -1253,15 +1255,17 @@ export const RaceScene: React.FC = () => {
           next = prevCars.map((car) => {
             const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
             if (netId === remotePid) {
-              const rawCid = getCarIdString(netPlayerShape.carId || car.carId);
-              car.carId = rawCid.toLowerCase().includes("porsche")
+              const updatedCar = { ...car };
+              const rawCid = getCarIdString(netPlayerShape.carId || updatedCar.carId);
+              updatedCar.carId = rawCid.toLowerCase().includes("porsche")
                 ? "porsche"
                 : rawCid.toLowerCase().includes("bugatti")
                   ? "bugatti"
                   : "ferrari";
-              SyncManager.unpackCarState(car, netPlayerShape);
-              car.position = { ...netPlayerShape.position };
-              car.quaternion = netPlayerShape.quaternion;
+              SyncManager.unpackCarState(updatedCar, netPlayerShape);
+              updatedCar.position = { ...netPlayerShape.position };
+              updatedCar.quaternion = netPlayerShape.quaternion;
+              return updatedCar;
             }
             return car;
           });
@@ -1340,6 +1344,43 @@ export const RaceScene: React.FC = () => {
               : "ferrari";
           if (netPlayer.position) {
             SyncManager.unpackCarState(targetCar, netPlayer);
+          }
+        }
+
+        // Apply smooth interpolation for remote player positions, velocities, angles, speed, etc.
+        if (targetCar.id !== "player" && !targetCar.isAI) {
+          targetCar.position = { ...targetCar.position };
+          targetCar.velocity = { ...targetCar.velocity };
+
+          if (targetCar.targetPosition) {
+            targetCar.position.x += (targetCar.targetPosition.x - targetCar.position.x) * 0.15;
+            targetCar.position.y += (targetCar.targetPosition.y - targetCar.position.y) * 0.15;
+            targetCar.position.z += (targetCar.targetPosition.z - targetCar.position.z) * 0.15;
+          }
+          if (targetCar.targetVelocity) {
+            targetCar.velocity.x += (targetCar.targetVelocity.x - targetCar.velocity.x) * 0.15;
+            targetCar.velocity.y += (targetCar.targetVelocity.y - targetCar.velocity.y) * 0.15;
+            targetCar.velocity.z += (targetCar.targetVelocity.z - targetCar.velocity.z) * 0.15;
+          }
+          if (typeof targetCar.targetAngle === "number") {
+            let diff = targetCar.targetAngle - targetCar.angle;
+            diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+            targetCar.angle += diff * 0.15;
+          }
+          if (typeof targetCar.targetSpeed === "number") {
+            targetCar.speed += (targetCar.targetSpeed - targetCar.speed) * 0.15;
+          }
+          if (typeof targetCar.targetSteerValue === "number") {
+            targetCar.steerValue = targetCar.targetSteerValue;
+          }
+          if (typeof targetCar.targetWheelRotation === "number") {
+            targetCar.wheelspinAngle = targetCar.targetWheelRotation;
+          }
+          if (typeof targetCar.targetIsNitroActive === "boolean") {
+            targetCar.isNitroActive = targetCar.targetIsNitroActive;
+          }
+          if (typeof targetCar.targetIsDrifting === "boolean") {
+            targetCar.isDrifting = targetCar.targetIsDrifting;
           }
         }
         return targetCar;
