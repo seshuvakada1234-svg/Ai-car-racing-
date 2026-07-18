@@ -191,6 +191,11 @@ export const RaceScene: React.FC = () => {
   const [trackHelper, setTrackHelper] = useState<TrackGeometryHelper | null>(null);
   const [physicsService, setPhysicsService] = useState<GamePhysicsService | null>(null);
   const [cars, setCars] = useState<CarState[]>([]);
+
+  useEffect(() => {
+    const remotePlayerIds = Array.from(remotePlayersMapRef.current.keys());
+    console.log("[CARS STATE LOG] cars.length:", cars.length, "cars ids:", cars.map(c => c.id), "remote player ids:", remotePlayerIds);
+  }, [cars]);
   const [controls, setControls] = useState<ControlsState>({
     forward: false,
     backward: false,
@@ -1074,6 +1079,7 @@ export const RaceScene: React.FC = () => {
 
     // Inner helper function to process updates per remote player
     function handleSinglePlayerUpdate(remotePid: string, wsData: any) {
+      console.log("onRemoteUpdate called", "remotePid:", remotePid, "wsData:", wsData);
       // Task 1: Verify every incoming vehicle_update message is received
       console.log("REMOTE UPDATE", wsData);
 
@@ -1187,12 +1193,15 @@ export const RaceScene: React.FC = () => {
         }
       }
 
+      console.log("before setCars in handleSinglePlayerUpdate (async)", "remotePid:", remotePid);
       setCars((prevCars) => {
+        console.log("before setCars updater execution inside handleSinglePlayerUpdate", "prevCars ids:", prevCars.map(c => c.id));
         const hasCar = prevCars.some((car) => {
           const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
           return netId === remotePid;
         });
 
+        let next;
         if (!hasCar) {
           const pInfo = mp.room?.players?.find((p: any) => (p.uid || p.id) === remotePid);
           const rawCid = getCarIdString(wsData.carId || pInfo?.carId || "ferrari");
@@ -1239,25 +1248,28 @@ export const RaceScene: React.FC = () => {
           newCar.targetIsNitroActive = newCar.isNitroActive;
 
           console.log(`[WS CLIENT] Dynamically spawning remote car state for player ${remotePid}`);
-          return [...prevCars, newCar];
+          next = [...prevCars, newCar];
+        } else {
+          next = prevCars.map((car) => {
+            const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
+            if (netId === remotePid) {
+              const rawCid = getCarIdString(netPlayerShape.carId || car.carId);
+              car.carId = rawCid.toLowerCase().includes("porsche")
+                ? "porsche"
+                : rawCid.toLowerCase().includes("bugatti")
+                  ? "bugatti"
+                  : "ferrari";
+              SyncManager.unpackCarState(car, netPlayerShape);
+              car.position = { ...netPlayerShape.position };
+              car.quaternion = netPlayerShape.quaternion;
+            }
+            return car;
+          });
         }
-
-        return prevCars.map((car) => {
-          const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
-          if (netId === remotePid) {
-            const rawCid = getCarIdString(netPlayerShape.carId || car.carId);
-            car.carId = rawCid.toLowerCase().includes("porsche")
-              ? "porsche"
-              : rawCid.toLowerCase().includes("bugatti")
-                ? "bugatti"
-                : "ferrari";
-            SyncManager.unpackCarState(car, netPlayerShape);
-            car.position = { ...netPlayerShape.position };
-            car.quaternion = netPlayerShape.quaternion;
-          }
-          return car;
-        });
+        console.log("after setCars updater execution inside handleSinglePlayerUpdate", "nextCars ids:", next.map(c => c.id));
+        return next;
       });
+      console.log("after setCars call in handleSinglePlayerUpdate (async completed)");
     }
 
     return () => {
@@ -1284,48 +1296,115 @@ export const RaceScene: React.FC = () => {
       }
     }
 
-    // Unpack remote cars
-    const activeUids = new Set(mp.room?.players?.map((p: any) => p.uid || p.id) || []);
-    const filteredCars = updatedCars.filter((car) => {
-      if (car.id === "player") return true;
-      if (car.isAI) return true;
-      const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
-      return activeUids.has(netId) || remotePlayersMapRef.current.has(netId);
-    });
+    // Unpack remote cars using functional updater to avoid race conditions with WS state updates
+    setCars((prevCars) => {
+      const updatedCarsMap = new Map(updatedCars.map((c) => [c.id, c]));
+      const activeUids = new Set(mp.room?.players?.map((p: any) => p.uid || p.id) || []);
 
-    const nextCars = filteredCars.map((car) => {
-      if (car.id === "player") {
-        const myPl = mp.room?.players?.find((p: any) => p.uid === activePlayerId || p.id === activePlayerId);
-        const rawCid = getCarIdString(myPl?.carId || car.carId);
-        car.carId = rawCid.toLowerCase().includes("porsche")
-          ? "porsche"
-          : rawCid.toLowerCase().includes("bugatti")
-            ? "bugatti"
-            : "ferrari";
-        return car;
-      }
+      // Filter prevCars to only keep player, AI, or remote players who are still active
+      const filteredCars = prevCars.filter((car) => {
+        if (car.id === "player") return true;
+        if (car.isAI) return true;
+        const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
+        return activeUids.has(netId) || remotePlayersMapRef.current.has(netId);
+      });
 
-      const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
-      let netPlayer = remotePlayersMapRef.current.get(netId);
-      if (!netPlayer) {
-        netPlayer = mp.room?.players?.find((p: any) => p.id === netId || p.uid === netId);
-      }
+      const nextCars = filteredCars.map((car) => {
+        // If this car was updated in the 3D physics loop, copy those properties
+        const updatedCar = updatedCarsMap.get(car.id);
+        const targetCar = updatedCar ? { ...car, ...updatedCar } : { ...car };
 
-      if (netPlayer) {
-        const rawCid = getCarIdString(netPlayer.carId);
-        car.carId = rawCid.toLowerCase().includes("porsche")
-          ? "porsche"
-          : rawCid.toLowerCase().includes("bugatti")
-            ? "bugatti"
-            : "ferrari";
-        if (netPlayer.position) {
-          SyncManager.unpackCarState(car, netPlayer);
+        if (targetCar.id === "player") {
+          const myPl = mp.room?.players?.find((p: any) => p.uid === activePlayerId || p.id === activePlayerId);
+          const rawCid = getCarIdString(myPl?.carId || targetCar.carId);
+          targetCar.carId = rawCid.toLowerCase().includes("porsche")
+            ? "porsche"
+            : rawCid.toLowerCase().includes("bugatti")
+              ? "bugatti"
+              : "ferrari";
+          return targetCar;
         }
-      }
-      return car;
-    });
 
-    setCars(nextCars);
+        const netId = targetCar.id.startsWith("remote_") ? targetCar.id.replace("remote_", "") : targetCar.id;
+        let netPlayer = remotePlayersMapRef.current.get(netId);
+        if (!netPlayer) {
+          netPlayer = mp.room?.players?.find((p: any) => p.id === netId || p.uid === netId);
+        }
+
+        if (netPlayer) {
+          const rawCid = getCarIdString(netPlayer.carId);
+          targetCar.carId = rawCid.toLowerCase().includes("porsche")
+            ? "porsche"
+            : rawCid.toLowerCase().includes("bugatti")
+              ? "bugatti"
+              : "ferrari";
+          if (netPlayer.position) {
+            SyncManager.unpackCarState(targetCar, netPlayer);
+          }
+        }
+        return targetCar;
+      });
+
+      // Spawn any missing remote cars from remotePlayersMapRef
+      const existingIds = new Set(nextCars.map((c) => c.id));
+      const addedCars: CarState[] = [];
+
+      remotePlayersMapRef.current.forEach((netPlayer, remotePid) => {
+        const carIdKey = `remote_${remotePid}`;
+        if (!existingIds.has(carIdKey)) {
+          const pInfo = mp.room?.players?.find((p: any) => (p.uid || p.id) === remotePid);
+          const rawCid = getCarIdString(netPlayer.carId || pInfo?.carId || "ferrari");
+          const baseCarId = rawCid.toLowerCase().includes("porsche")
+            ? "porsche"
+            : rawCid.toLowerCase().includes("bugatti")
+              ? "bugatti"
+              : "ferrari";
+
+          const angle = netPlayer.angle ?? 0;
+
+          const newCar: CarState = {
+            id: carIdKey,
+            name: netPlayer.playerName || netPlayer.name || pInfo?.playerName || pInfo?.name || "Driver",
+            isAI: false,
+            color: netPlayer.carColor || pInfo?.carColor || "#0062ff",
+            carId: baseCarId,
+            position: { x: netPlayer.position?.x ?? 0, y: netPlayer.position?.y ?? 0, z: netPlayer.position?.z ?? 0 },
+            velocity: { x: netPlayer.velocity?.x ?? 0, y: netPlayer.velocity?.y ?? 0, z: netPlayer.velocity?.z ?? 0 },
+            speed: netPlayer.speed ?? 0,
+            angle: angle,
+            angularVelocity: 0,
+            driftFactor: 0,
+            isDrifting: !!netPlayer.isDrifting,
+            currentLap: netPlayer.currentLap ?? 1,
+            currentCheckpointIndex: netPlayer.currentCheckpointIndex ?? 0,
+            distanceToNextCheckpoint: 999,
+            racePosition: nextCars.length + addedCars.length + 1,
+            totalDistanceTraveled: netPlayer.totalDistanceTraveled ?? 0,
+            isFinished: !!netPlayer.isFinished,
+            lastActiveTime: Date.now(),
+            nitroCharged: 60,
+            isNitroActive: !!netPlayer.isNitroActive,
+            stuckTimer: 0,
+            aiTargetNode: 0,
+            aiSpeedFactor: 1,
+            aiAggression: 0.72,
+          };
+
+          newCar.targetPosition = { ...newCar.position };
+          newCar.targetVelocity = { ...newCar.velocity };
+          newCar.targetAngle = newCar.angle;
+          newCar.targetSpeed = newCar.speed;
+          newCar.targetIsDrifting = newCar.isDrifting;
+          newCar.targetIsNitroActive = newCar.isNitroActive;
+
+          addedCars.push(newCar);
+        }
+      });
+
+      const finalCars = [...nextCars, ...addedCars];
+      console.log("[TICK STATE UPDATE] finalCars ids:", finalCars.map((c) => c.id));
+      return finalCars;
+    });
   };
 
   const handleRaceFinish = () => {

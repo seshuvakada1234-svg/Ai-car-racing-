@@ -143,6 +143,18 @@ export function connectVehicleSocket(
 
   ws.onopen = () => {
     console.log("[WS CLIENT] Connection established successfully.");
+    try {
+      ws.send(
+        JSON.stringify({
+          type: "join",
+          roomCode: activeRoomCode,
+          playerId: activePlayerId,
+        })
+      );
+      console.log("[WS CLIENT] Join packet sent for room:", activeRoomCode);
+    } catch (err) {
+      console.warn("[WS CLIENT] Error sending join packet:", err);
+    }
   };
 
   ws.onmessage = (event) => {
@@ -190,7 +202,7 @@ export function connectVehicleSocket(
   };
 
   ws.onerror = (err) => {
-    console.error("[WS CLIENT] WebSocket error occurred:", err);
+    console.warn("[WS CLIENT] WebSocket bypass channel error (this is normal if WS is restricted; falling back to Firestore):", err);
   };
 
   ws.onclose = () => {

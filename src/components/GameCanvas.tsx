@@ -723,6 +723,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       });
 
       // Animate Vehicles and Wheels
+      console.log("before VehicleRenderer.update", "cars.length:", currentCars.length, "cars ids:", currentCars.map(c => c.id));
       vehicleRenderer.update(
         currentCars,
         controlsRef.current,
@@ -732,6 +733,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         activeWeather,
         activeTimeOfDay,
       );
+      console.log("after VehicleRenderer.update");
 
       // Animate vehicle effects (flames, light trails)
       vehicleEffects.update(currentCars, vehicleRenderer.carGroupMap);

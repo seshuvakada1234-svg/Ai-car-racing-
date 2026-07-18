@@ -154,7 +154,8 @@ async function startServer() {
   server.on("upgrade", (request, socket, head) => {
     try {
       const urlObj = new URL(request.url || "", `http://${request.headers.host || "localhost"}`);
-      if (urlObj.pathname === "/ws/vehicle") {
+      const pathname = urlObj.pathname.replace(/\/+$/, "");
+      if (pathname === "/ws/vehicle") {
         vehicleWss.handleUpgrade(request, socket, head, (ws) => {
           vehicleWss.emit("connection", ws, request);
         });

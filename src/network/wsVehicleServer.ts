@@ -8,7 +8,27 @@ export function setupVehicleWsServer(wss: WebSocketServer) {
   // Map to store: roomCode -> Set of sockets
   const rooms = new Map<string, Set<WebSocket>>();
 
-  wss.on("connection", (ws: WebSocket) => {
+  wss.on("connection", (ws: WebSocket, request?: any) => {
+    // Attempt auto-join from URL search parameters if available
+    if (request && request.url) {
+      try {
+        const urlObj = new URL(request.url, `http://${request.headers?.host || "localhost"}`);
+        const roomCode = urlObj.searchParams.get("roomCode");
+        const playerId = urlObj.searchParams.get("playerId");
+        if (roomCode && playerId) {
+          const cleanRoomCode = roomCode.toUpperCase().trim();
+          socketData.set(ws, { roomCode: cleanRoomCode, playerId });
+          if (!rooms.has(cleanRoomCode)) {
+            rooms.set(cleanRoomCode, new Set());
+          }
+          rooms.get(cleanRoomCode)!.add(ws);
+          console.log(`[WS SERVER] Player ${playerId} auto-joined room ${cleanRoomCode} via connection URL params`);
+        }
+      } catch (err) {
+        console.error("[WS SERVER] Error parsing connection URL parameters:", err);
+      }
+    }
+
     ws.on("message", (message: string) => {
       try {
         const data = JSON.parse(message.toString());
