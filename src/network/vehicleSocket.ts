@@ -73,7 +73,7 @@ export function sendVehicleUpdate(car: any): void {
     timestamp: now
   };
 
-  console.log("[SEND]", { playerId: activePlayerId, roomCode: activeRoomCode, position });
+  console.log("[CLIENT A] Sending vehicleUpdate", packet);
 
   try {
     socket.send(JSON.stringify(packet));
@@ -159,18 +159,16 @@ export function connectVehicleSocket(
   };
 
   ws.onmessage = (event) => {
-    console.log("[WS CLIENT] Every incoming raw WebSocket message:", event.data);
+    console.log("[CLIENT B] Raw WebSocket message", event.data);
     try {
       const data = JSON.parse(event.data);
-      console.log("[WS CLIENT] Parsed message type:", data.type);
       
       if (data.type === "vehicleUpdate" || data.type === "vehicle_update") {
-        console.log("[WS CLIENT] vehicleUpdate received");
+        console.log("[CLIENT B] Parsed vehicleUpdate", data);
         const { playerId, roomCode } = data;
         if (playerId === activePlayerId) return; // ignore self
         
-        console.log("[WS CLIENT] Broadcast received from playerId:", playerId);
-        console.log("[WS CLIENT] Calling onRemoteUpdate with playerId:", playerId);
+        console.log("[CLIENT B] onRemoteUpdate", playerId);
         onRemoteUpdate(playerId, data);
         return;
       }

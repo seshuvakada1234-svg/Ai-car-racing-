@@ -118,7 +118,7 @@ export class RoomDurableObject {
           msg.playerId = playerId;
 
           // Requirement 8: Debug Logging - Vehicle update received
-          console.log(`[Durable Object] Vehicle update received from ${playerId}`);
+          console.log(`[DO] Received vehicleUpdate from ${playerId}`);
 
           // Requirement 4: Store latest transform
           this.latestStates.set(playerId, msg);
@@ -137,7 +137,7 @@ export class RoomDurableObject {
           }
 
           // Requirement 8: Debug Logging - Vehicle update broadcast
-          console.log(`[Durable Object] Vehicle update broadcast to ${broadcastTo} client(s)`);
+          console.log(`[DO] Broadcasting to ${broadcastTo} clients`);
           console.log(`Room ${roomCode}`);
           console.log(`Players: ${this.room.players.length}`);
           console.log(`Broadcast vehicle_update to ${broadcastTo} client`);

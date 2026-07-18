@@ -1270,7 +1270,7 @@ export const RaceScene: React.FC = () => {
             return car;
           });
         }
-        console.log("after setCars updater execution inside handleSinglePlayerUpdate", "nextCars ids:", next.map(c => c.id));
+        console.log("[CLIENT B] setCars completed", next);
         return next;
       });
       console.log("after setCars call in handleSinglePlayerUpdate (async completed)");

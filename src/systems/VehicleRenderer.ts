@@ -152,6 +152,7 @@ export class VehicleRenderer {
       if (c.id !== "player" && !c.isAI) {
         if (c.position) {
           carGroup.position.set(c.position.x, c.position.y, c.position.z);
+          console.log("[CLIENT B] VehicleRenderer received updated position", c.id, c.position);
         }
         if (c.quaternion) {
           carGroup.quaternion.set(c.quaternion.x, c.quaternion.y, c.quaternion.z, c.quaternion.w);
