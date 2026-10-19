@@ -18,3 +18,7 @@ View your app in AI Studio: https://ai.studio/apps/9544403b-6ac1-40b8-a886-1ff8a
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Recent maintenance
+
+- Updated TanStack Start dependencies to patched versions to address the Vercel security advisory for `@tanstack/react-start`.
