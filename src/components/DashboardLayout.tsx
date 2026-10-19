@@ -104,6 +104,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
       return [
         { path: "/garage", label: "Garage", icon: Car },
         { path: "/rooms", label: "Room Lobby", icon: Users },
+        { path: "/multiplayer-mode", label: "Multiplayer Modes", icon: Radio },
         { path: "/profile", label: "My Profile", icon: UserIcon },
         { path: "/leaderboard", label: "Leaderboard", icon: Trophy },
       ];

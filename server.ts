@@ -5,7 +5,8 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { setupMultiplayerWebSocket } from "./src/multiplayer/multiplayerServer";
 import { WebSocketServer } from "ws";
-import { setupVehicleWsServer } from "./src/network/wsVehicleServer";
+import { setupVehicleWsServer, setVehicleWsMembershipValidator } from "./src/network/wsVehicleServer";
+import { createLanRoomRouter, LanRoomStore } from "./src/network/lanRoomServer";
 
 async function startServer() {
   const app = express();
@@ -50,6 +51,16 @@ async function startServer() {
   downloadMapOnStartup();
 
   app.use(express.json());
+
+  // Local Offline LAN room management APIs (no Firebase required)
+  const lanRoomStore = new LanRoomStore();
+  app.use("/api/lan", createLanRoomRouter(lanRoomStore, PORT));
+
+  // Membership guard for local LAN rooms. Unknown room codes are allowed so
+  // existing online mode paths keep working exactly as before.
+  setVehicleWsMembershipValidator((roomCode, playerId, authToken) =>
+    lanRoomStore.validateMembershipForRelay(roomCode, playerId, authToken),
+  );
 
   // Client-side error telemetry logging endpoint
   app.post("/api/log-error", (req, res) => {

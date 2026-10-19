@@ -42,6 +42,7 @@ import { LobbyScreen } from "./components/LobbyScreen";
 import { JoinRoomModal } from "./components/JoinRoomModal";
 import { RoomCodeHUD } from "./components/RoomCodeHUD";
 import { SyncManager } from "./multiplayer/SyncManager";
+import { NormalRoomService } from "./multiplayer/NormalRoomService";
 import { terrainManager } from "./world/TerrainManager";
 import * as THREE from "three";
 
@@ -66,6 +67,10 @@ import { JoinRoomPage } from "./components/JoinRoomPage";
 import { WaitingLobbyPage } from "./components/WaitingLobbyPage";
 import { UserRacePage } from "./components/UserRacePage";
 import { SpectatorPage } from "./components/SpectatorPage";
+import { MultiplayerModePage } from "./components/MultiplayerModePage";
+import { LanModePage } from "./components/LanModePage";
+import { LanLobbyPage } from "./components/LanLobbyPage";
+import { LanRacePage } from "./components/LanRacePage";
 
 // Performance Offline Asset Stream System Imports
 import { useAssetStatus } from "./hooks/useAssetStatus";
@@ -422,6 +427,7 @@ function AppBody() {
   const trackHelperRef = useRef<TrackGeometryHelper | null>(null);
   const physicsServiceRef = useRef<GamePhysicsService | null>(null);
   const lastTimeRef = useRef<number>(Date.now());
+  const legacyRealtimePlayersRef = useRef<Map<string, any>>(new Map());
 
   // Pre-race countdown: starts at 60s. Cars remain frozen during the whole
   // countdown phase (GameCanvas gates controls + AI on gameState==="countdown").
@@ -751,11 +757,20 @@ function AppBody() {
   useEffect(() => {
     if (mp.room && (phase === "multiplayer_lobby" || phase === "menu" || phase === "completed")) {
       if (mp.room.phase === "countdown" || mp.room.phase === "racing") {
+        const activeRoomCode = mp.room.roomCode || mp.room.code || mp.room.id;
+        if (activeRoomCode) {
+          const targetPath = `/race/${activeRoomCode}`;
+          if (location.pathname !== targetPath) {
+            navigate(targetPath);
+          }
+          return;
+        }
+
         handleStartMultiplayerGame(mp.room, mp.playerId || "");
         navigate("/race");
       }
     }
-  }, [mp.room?.phase, mp.room?.id]);
+  }, [mp.room?.phase, mp.room?.id, mp.room?.roomCode, mp.room?.code, mp.playerId, phase, navigate, location.pathname]);
 
   useEffect(() => {
     if (mp.room && mp.room.isLiveMode) {
@@ -765,6 +780,28 @@ function AppBody() {
       }
     }
   }, [mp.room?.phase, mp.room?.isLiveMode, phase]);
+
+  // Legacy multiplayer route compatibility: consume the same players subcollection
+  // that local movement writes to so remote cars animate correctly.
+  useEffect(() => {
+    legacyRealtimePlayersRef.current.clear();
+
+    const roomCode = mp.room?.roomCode || mp.room?.code;
+    if (!roomCode) return;
+
+    const unsub = NormalRoomService.listenToPlayers(roomCode, (players) => {
+      const next = new Map<string, any>();
+      players.forEach((p) => {
+        next.set(p.uid, p);
+      });
+      legacyRealtimePlayersRef.current = next;
+    });
+
+    return () => {
+      unsub();
+      legacyRealtimePlayersRef.current.clear();
+    };
+  }, [mp.room?.roomCode, mp.room?.code]);
 
   // Callback triggered inside the canvas animation frames
   const handleTickUpdate = (updatedCars: CarState[]) => {
@@ -788,7 +825,9 @@ function AppBody() {
         if (car.id === "player") return car;
 
         const netId = car.id.startsWith("remote_") ? car.id.replace("remote_", "") : car.id;
-        const netPlayer = mp.room.players.find((p: any) => p.id === netId);
+        const netPlayer =
+          legacyRealtimePlayersRef.current.get(netId) ||
+          mp.room.players.find((p: any) => p.id === netId || p.uid === netId);
         if (netPlayer && netPlayer.position) {
           SyncManager.unpackCarState(car, netPlayer);
         }
@@ -868,6 +907,12 @@ function AppBody() {
             </PublicRoute>
           }
         />
+
+        {/* Multiplayer mode selection (online cloud vs offline LAN) */}
+        <Route path="/multiplayer-mode" element={<MultiplayerModePage />} />
+        <Route path="/lan" element={<LanModePage />} />
+        <Route path="/lan/room/:roomCode" element={<LanLobbyPage />} />
+        <Route path="/lan/race/:roomCode" element={<LanRacePage />} />
 
         {/* Admin Protected Pages */}
         <Route
@@ -1049,11 +1094,18 @@ function AppBody() {
                   />
                 ) : (
                   <div className="space-y-6">
-                    <div>
+                    <div className="space-y-3">
                       <h2 className="text-2xl font-black uppercase tracking-tight">Matchmaker Lobby</h2>
                       <p className="text-xs text-slate-400 mt-1">
                         Join or host active multiplayer gaming staging rooms
                       </p>
+
+                      <button
+                        onClick={() => navigate("/multiplayer-mode")}
+                        className="px-4 py-2 rounded-xl border border-emerald-500/30 bg-emerald-950/20 text-emerald-200 text-[10px] font-black uppercase tracking-wider hover:bg-emerald-900/30 transition cursor-pointer"
+                      >
+                        Switch To Offline LAN Mode
+                      </button>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl">
