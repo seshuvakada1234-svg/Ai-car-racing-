@@ -1020,8 +1020,8 @@ export const HUD: React.FC<HUDProps> = ({
                 WebkitUserSelect: "none",
                 WebkitTapHighlightColor: "transparent",
                 pointerEvents: "auto",
-                width: "100px",
-                height: "100px",
+                width: "clamp(68px, 18vw, 100px)",
+                height: "clamp(68px, 18vw, 100px)",
               }}
               className={`rounded-full flex flex-col items-center justify-center transition-all bg-slate-950/40 backdrop-blur-md border-2 ${
                 leftPressed
@@ -1043,8 +1043,8 @@ export const HUD: React.FC<HUDProps> = ({
                 WebkitUserSelect: "none",
                 WebkitTapHighlightColor: "transparent",
                 pointerEvents: "auto",
-                width: "100px",
-                height: "100px",
+                width: "clamp(68px, 18vw, 100px)",
+                height: "clamp(68px, 18vw, 100px)",
               }}
               className={`rounded-full flex flex-col items-center justify-center transition-all bg-slate-950/40 backdrop-blur-md border-2 ${
                 rightPressed
