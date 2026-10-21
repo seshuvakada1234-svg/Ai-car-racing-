@@ -7,6 +7,7 @@ import { RoomService } from "./RoomService";
 import { RoomState, RoomPlayer as GenericRoomPlayer } from "./RoomState";
 import { Unsubscribe } from "firebase/firestore";
 import { auth } from "../lib/firebase";
+import { RoomValidator } from "./RoomValidator";
 
 // Safe fallback storage when browser denies localStorage/sessionStorage access in sandboxed iframes
 const memoryStorage = new Map<string, string>();
@@ -44,9 +45,12 @@ function safeRemoveItem(type: "local" | "session", key: string): void {
   } catch (e) {}
 }
 
-export type RoomStatus = "waiting" | "countdown" | "racing" | "finished" | "archived" | "closed" | "complete";
+export type RoomStatus = RoomState["status"];
 
 export interface RoomPlayer {
+  uid?: string;
+  playerName?: string;
+  name?: string;
   id: string;
   nickname: string;
   carId: string;
@@ -55,6 +59,15 @@ export interface RoomPlayer {
   isAI: boolean;
   joinedAt: number;
   carColor?: string;
+  ready?: boolean;
+  mapReady?: boolean;
+  mapProgress?: number;
+  carReady?: boolean;
+  carProgress?: number;
+  glbParsing?: boolean;
+  vehicleInitialized?: boolean;
+  sceneReady?: boolean;
+  connected?: boolean;
 
   // Physical sync
   position?: { x: number; y: number; z: number };
@@ -63,6 +76,7 @@ export interface RoomPlayer {
   speed?: number;
   isDrifting?: boolean;
   currentLap?: number;
+  currentCheckpointIndex?: number;
   isFinished?: boolean;
   totalDistanceTraveled?: number;
 }
@@ -84,12 +98,48 @@ export interface RoomData {
   createdAt: any;
   maxPlayers: number;
   countdownStartTime?: any;
+  raceStarted?: boolean;
+  selectedCar?: string;
+  selectedMap?: RoomState["selectedMap"];
 }
 
 export class RoomManager {
   private static currentRoomCode: string | null = null;
+  private static sessionLoaded = false;
   private static currentPlayerId: string | null = null;
   private static unsubscribe: Unsubscribe | null = null;
+  private static sessionListeners = new Set<() => void>();
+
+  static subscribeToSession(listener: () => void): () => void {
+    this.sessionListeners.add(listener);
+    return () => { this.sessionListeners.delete(listener); };
+  }
+
+  static rememberSession(code: string, nickname?: string, carId?: string, carColor?: string): void {
+    const cleanCode = RoomValidator.normalizeCode(code);
+    if (!RoomValidator.isValidCode(cleanCode)) throw new Error("Invalid room code");
+    const changed = this.currentRoomCode !== cleanCode;
+    this.currentRoomCode = cleanCode;
+    this.sessionLoaded = true;
+    safeSetItem("session", "last_room_code", cleanCode);
+    safeSetItem("local", "activeRoomCode", cleanCode);
+    if (nickname) safeSetItem("session", "last_player_nickname", nickname);
+    if (carId) safeSetItem("session", "last_car_id", carId);
+    if (carColor) safeSetItem("session", "last_car_color", carColor);
+    if (changed) this.sessionListeners.forEach((listener) => listener());
+  }
+
+  static clearSession(code: string): void {
+    // An earlier asynchronous leave must not clear a newly joined room.
+    if (this.getCurrentCode() !== RoomValidator.normalizeCode(code)) return;
+    this.currentRoomCode = null;
+    this.sessionLoaded = true;
+    if (RoomValidator.normalizeCode(safeGetItem("local", "activeRoomCode")) === RoomValidator.normalizeCode(code)) {
+      safeRemoveItem("local", "activeRoomCode");
+    }
+    safeRemoveItem("session", "last_room_code");
+    this.sessionListeners.forEach((listener) => listener());
+  }
 
   static async createRoom(
     hostNickname: string,
@@ -101,16 +151,10 @@ export class RoomManager {
     laps = 3,
     weather = "clear",
   ): Promise<string> {
+    await auth.authStateReady();
     const hostId = this.getOrCreatePlayerId();
     const rawCode = await RoomService.createRoom(hostId, hostNickname, "", hostCarId, map);
     const code = rawCode.trim().toUpperCase();
-
-    // Save local state for browser reconnection & context
-    safeSetItem("local", "activeRoomCode", code);
-    safeSetItem("session", "last_room_code", code);
-    safeSetItem("session", "last_player_nickname", hostNickname);
-    safeSetItem("session", "last_car_id", hostCarId);
-    if (carColor) safeSetItem("session", "last_car_color", carColor);
 
     // Now update extra parameters
     await RoomService.updateRoomSettings(code, {
@@ -119,42 +163,28 @@ export class RoomManager {
       weather,
     } as any);
 
-    RoomManager.currentRoomCode = code;
+    this.rememberSession(code, hostNickname, hostCarId, carColor);
     RoomManager.currentPlayerId = hostId;
     return code;
   }
 
   static async joinRoom(code: string, nickname: string, carId: string, carColor?: string): Promise<RoomData> {
+    await auth.authStateReady();
     const cleanCode = code.trim().toUpperCase();
     const playerId = this.getOrCreatePlayerId();
 
     // Check Firebase and perform proper validation
     await RoomService.joinRoom(cleanCode, playerId, nickname, "", carId);
 
-    // Save local state for browser reconnection & context
-    safeSetItem("local", "activeRoomCode", cleanCode);
-    safeSetItem("session", "last_room_code", cleanCode);
-    safeSetItem("session", "last_player_nickname", nickname);
-    safeSetItem("session", "last_car_id", carId);
-    if (carColor) safeSetItem("session", "last_car_color", carColor);
-
-    RoomManager.currentRoomCode = cleanCode;
+    this.rememberSession(cleanCode, nickname, carId, carColor);
     RoomManager.currentPlayerId = playerId;
 
-    // Return the formatted RoomData
-    return new Promise((resolve, reject) => {
-      const unsub = RoomService.listenToRoom(cleanCode, (room) => {
-        unsub();
-        if (room) {
-          resolve(this.mapToRoomData(room));
-        } else {
-          reject(new Error("Room not found after joining"));
-        }
-      });
-    });
+    const room = await RoomService.getRoom(cleanCode);
+    if (!room) throw new Error("Room not found after joining");
+    return this.mapToRoomData(room);
   }
 
-  static listenToRoom(code: string, onChange: (room: RoomData | null) => void): () => void {
+  static listenToRoom(code: string, onChange: (room: RoomData | null) => void, onError?: (error: Error) => void): () => void {
     const cleanCode = code.toUpperCase().trim();
     const unsub = RoomService.listenToRoom(cleanCode, (room) => {
       if (room) {
@@ -162,7 +192,7 @@ export class RoomManager {
       } else {
         onChange(null);
       }
-    });
+    }, onError);
     return unsub;
   }
 
@@ -181,8 +211,7 @@ export class RoomManager {
   }
 
   static async setPlayerReady(code: string, playerId: string): Promise<void> {
-    // Already set to ready on join/create so we can immediately start or let user override
-    console.log(`Setting player ready ${playerId}`);
+    await RoomService.toggleReady(code, playerId, true);
   }
 
   static async startRace(code: string): Promise<void> {
@@ -222,17 +251,13 @@ export class RoomManager {
     const cleanCode = code.trim().toUpperCase();
     const playerId = this.getOrCreatePlayerId();
     await RoomService.leaveRoom(cleanCode, playerId);
-    safeRemoveItem("local", "activeRoomCode");
-    safeRemoveItem("session", "last_room_code");
-    RoomManager.currentRoomCode = null;
+    this.clearSession(cleanCode);
   }
 
   static async deleteRoom(code: string): Promise<void> {
     const cleanCode = code.trim().toUpperCase();
     await RoomService.deleteRoom(cleanCode);
-    safeRemoveItem("local", "activeRoomCode");
-    safeRemoveItem("session", "last_room_code");
-    RoomManager.currentRoomCode = null;
+    this.clearSession(cleanCode);
   }
 
   // ── Reconnection Handler ───────────────────────────────────
@@ -240,8 +265,8 @@ export class RoomManager {
   /**
    * Attempts to rebuild the state and automatically reconnect the player on reload
    */
-  static async attemptReconnect(): Promise<RoomData | null> {
-    const lastRoom = safeGetItem("local", "activeRoomCode") || safeGetItem("session", "last_room_code");
+  static async attemptReconnect(code = this.getCurrentCode()): Promise<RoomData | null> {
+    const lastRoom = code;
     const lastNickname = safeGetItem("session", "last_player_nickname");
     const lastCar = safeGetItem("session", "last_car_id");
     const lastColor = safeGetItem("session", "last_car_color") || undefined;
@@ -255,32 +280,26 @@ export class RoomManager {
       const data = await this.joinRoom(normalizedCode, lastNickname, lastCar, lastColor);
       return data;
     } catch (e) {
-      console.warn("Reconnection auto-attempt silent discard:", e);
-      // Clean stale session records
-      safeRemoveItem("local", "activeRoomCode");
-      safeRemoveItem("session", "last_room_code");
-      return null;
+      console.error(`[RoomManager] Reconnect failed for ${normalizedCode}:`, e);
+      // Keep the session on network/auth errors so another attempt can recover.
+      throw e;
     }
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   static getCurrentCode(): string | null {
-    if (!RoomManager.currentRoomCode) {
-      const codeFromStorage = safeGetItem("local", "activeRoomCode") || safeGetItem("session", "last_room_code");
-      RoomManager.currentRoomCode = codeFromStorage ? codeFromStorage.trim().toUpperCase() : null;
+    if (!RoomManager.sessionLoaded) {
+      RoomManager.sessionLoaded = true;
+      // Tabs can visit different rooms; prefer this tab's session over shared localStorage.
+      const codeFromStorage = safeGetItem("session", "last_room_code") || safeGetItem("local", "activeRoomCode");
+      RoomManager.currentRoomCode = RoomValidator.isValidCode(codeFromStorage) ? RoomValidator.normalizeCode(codeFromStorage) : null;
     }
     return RoomManager.currentRoomCode;
   }
 
   static getCurrentPlayerId(): string {
-    if (auth.currentUser) {
-      return auth.currentUser.uid;
-    }
-    if (!RoomManager.currentPlayerId) {
-      RoomManager.currentPlayerId = this.getOrCreatePlayerId();
-    }
-    return RoomManager.currentPlayerId;
+    return auth.currentUser?.uid || "";
   }
 
   static isHost(room: RoomData): boolean {
@@ -291,16 +310,12 @@ export class RoomManager {
     if (auth.currentUser) {
       return auth.currentUser.uid;
     }
-    let id = safeGetItem("session", "racePlayerId");
-    if (!id) {
-      id = `player_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      safeSetItem("session", "racePlayerId", id);
-    }
-    return id;
+    throw new Error("Sign in before joining a multiplayer room.");
   }
 
   private static mapToRoomData(room: RoomState): RoomData {
     return {
+      ...room,
       roomCode: room.roomCode,
       code: room.roomCode,
       id: room.roomCode,
@@ -309,13 +324,14 @@ export class RoomManager {
       difficulty: room.difficulty || "medium",
       laps: room.laps || 3,
       weather: room.weather || "clear",
-      players: room.players.map((p) => ({
-        id: p.uid,
-        nickname: p.playerName,
-        carId: p.carId,
+      players: (room.players || []).map((p) => ({
+        ...p,
+        id: p.uid || p.id!,
+        nickname: p.playerName || p.nickname || p.name || "Driver",
+        carId: typeof p.carId === "string" ? p.carId : (p.carId as any)?.id || "ferrari",
         carColor: p.carColor,
         isHost: p.isHost,
-        isReady: p.ready,
+        isReady: p.ready ?? p.isReady ?? false,
         isAI: p.isAI,
         joinedAt: p.joinedAt,
         position: p.position,

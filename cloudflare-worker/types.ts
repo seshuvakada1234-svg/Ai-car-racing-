@@ -4,6 +4,7 @@
 export interface Env {
   // Durable Object Namespace binding
   VEHICLE_ROOM: DurableObjectNamespace;
+  ASSET_ALLOWED_HOSTS?: string;
 }
 
 /**

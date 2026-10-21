@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { validateGlb } from "./glbAsset";
+
 export class AssetVerifier {
   /**
    * Simple check of local file blob validation
@@ -14,8 +16,9 @@ export class AssetVerifier {
     if (blob.size <= 100) return false;
 
     // Check if it's text under the hood instead of binary GLB
-    const header = await blob.slice(0, 4).text();
-    if (header.startsWith("<") || header.startsWith("{") || header.startsWith("html") || header.startsWith("#")) {
+    try {
+      validateGlb(await blob.arrayBuffer());
+    } catch {
       return false;
     }
 

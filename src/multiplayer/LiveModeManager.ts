@@ -24,6 +24,7 @@ export class LiveModeManager {
       room.roomCode,
       (updated) => {
         LiveModeManager.currentRoom = updated;
+        if (!updated) return;
         LiveModeManager.onPhaseChange?.({
           phase: LiveModeManager.toPhase(updated.status),
           room: updated,

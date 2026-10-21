@@ -79,7 +79,7 @@ export const MultiplayerRaceLoadingScreen: React.FC<MultiplayerRaceLoadingScreen
   const humanPlayers = players.filter((p) => !p.isAI);
 
   const getPlayerStatusLabel = (p: any) => {
-    if (p.ready || (p.mapReady && p.carReady && p.ready)) {
+    if (p.ready && p.mapReady && p.carReady && p.sceneReady) {
       return (
         <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
           <Check className="w-3.5 h-3.5" /> READY
@@ -288,7 +288,7 @@ export const MultiplayerRaceLoadingScreen: React.FC<MultiplayerRaceLoadingScreen
                     >
                       <div className="flex items-center gap-2">
                         {player.isHost && (
-                          <Shield className="w-3.5 h-3.5 text-cyan-400" title="Host" />
+                          <Shield className="w-3.5 h-3.5 text-cyan-400"><title>Host</title></Shield>
                         )}
                         <span className={`font-bold ${isMe ? "text-cyan-400" : "text-white"}`}>
                           {player.playerName || player.name || "Driver"} {isMe ? "(YOU)" : ""}

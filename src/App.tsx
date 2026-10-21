@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useEffect, useRef } from "react";
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, matchPath } from "react-router-dom";
 import { GamePhase, GameSettings, CarState, ControlsState } from "./types";
 import { TrackGeometryHelper } from "./utils/track";
 import { GamePhysicsService } from "./physics/GamePhysics";
@@ -386,7 +386,8 @@ function AppBody() {
   const [elapsedTime, setElapsedTime] = useState(0);
 
   // Hook the multiplayer client context
-  const mp = useMultiplayer();
+  const roomRoute = matchPath("/room/:roomCode", location.pathname) || matchPath("/race/:roomCode", location.pathname);
+  const mp = useMultiplayer(undefined, roomRoute?.params.roomCode);
   const room = mp.room;
 
   // Staging join model overlay
@@ -755,7 +756,7 @@ function AppBody() {
 
   // Synchronize room triggers automatically
   useEffect(() => {
-    if (mp.room && (phase === "multiplayer_lobby" || phase === "menu" || phase === "completed")) {
+    if (mp.room && (phase === "multiplayer_lobby" || location.pathname.startsWith("/room/") || location.pathname.startsWith("/race/"))) {
       if (mp.room.phase === "countdown" || mp.room.phase === "racing") {
         const activeRoomCode = mp.room.roomCode || mp.room.code || mp.room.id;
         if (activeRoomCode) {
@@ -873,10 +874,13 @@ function AppBody() {
 
       // Auto-delete the room if in multiplayer and this client is the host
       if (mp.room && mp.room.hostId === mp.playerId) {
+        const finishedRoomCode = mp.room.roomCode;
         // Wait 3 seconds so regular players can receive final state updates before deletion
         setTimeout(async () => {
           try {
-            await mp.deleteRoom();
+            // Capture the finished room: a delayed callback must never delete a
+            // different room the user has joined in the meantime.
+            await NormalRoomService.deleteRoom(finishedRoomCode);
           } catch (e) {
             console.error("Error auto-deleting finished room:", e);
           }

@@ -45,29 +45,29 @@ interface FirestoreErrorInfo {
 }
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errMessage = error instanceof Error ? error.message : String(error);
-  const isPermissionError = errMessage.toLowerCase().includes("permission") || errMessage.toLowerCase().includes("denied");
-  const isReadOp = operationType === OperationType.GET || operationType === OperationType.LIST;
+  console.error(`[RoomService] ${operationType} failed at ${path}:`, error);
+  // Listener errors are delivered through onError, never disguised as a deleted room.
+  if (operationType === OperationType.GET || operationType === OperationType.LIST) return;
+  throw error instanceof Error ? error : new Error(String(error));
+}
 
-  const errInfo: FirestoreErrorInfo = {
-    error: errMessage,
-    authInfo: {
-      userId: auth?.currentUser?.uid || null,
-      email: auth?.currentUser?.email || null,
-      emailVerified: auth?.currentUser?.emailVerified || null,
-      isAnonymous: auth?.currentUser?.isAnonymous || null,
-    },
-    operationType,
-    path,
+function normalizeRoom(data: any, code: string): RoomState {
+  const selectedCar = typeof data.selectedCar === "object" ? data.selectedCar?.id : data.selectedCar;
+  const mapId = data.selectedMap?.id || data.mapType || data.mapId || "map1";
+  return {
+    ...data,
+    roomCode: code,
+    code,
+    id: code,
+    hostId: data.hostId || data.ownerUid,
+    ownerUid: data.hostId || data.ownerUid,
+    selectedCar: selectedCar || "ferrari",
+    selectedCarObj: typeof data.selectedCar === "object" ? data.selectedCar : data.selectedCarObj,
+    mapType: mapId,
+    mapId,
+    status: data.status || data.phase || "waiting",
+    players: Array.isArray(data.players) ? data.players : [],
   };
-
-  if (isPermissionError || isReadOp) {
-    console.warn(`[RoomService Safe-Recovery] Handled ${operationType} error on path "${path}" gracefully without throwing: ${errMessage}`);
-    return;
-  }
-
-  console.error("Firestore Error details: ", JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
 }
 
 export function getSelectedCarObj(carId: string) {
@@ -207,11 +207,15 @@ export class RoomService {
       };
 
       const roomRef = doc(db, "rooms", roomCode);
-      await setDoc(roomRef, roomData);
-
-      // Support subcollection structure used by legacy real-time loops
       const playerRef = doc(db, "rooms", roomCode, "players", hostId);
-      await setDoc(playerRef, hostPlayer);
+      // Publish membership and the room together. A listener must never observe
+      // a created room without its host player document.
+      await runTransaction(db, async (transaction) => {
+        const existing = await transaction.get(roomRef);
+        if (existing.exists()) throw new Error("Room code already exists. Please retry.");
+        transaction.set(roomRef, roomData);
+        transaction.set(playerRef, hostPlayer);
+      });
 
       return roomCode;
     } catch (e) {
@@ -231,7 +235,7 @@ export class RoomService {
     selectedCar: string,
   ): Promise<void> {
     const cleanCode = roomCode.toUpperCase().trim();
-    if (!cleanCode) throw new Error("Invalid room code");
+    if (!RoomValidator.isValidCode(cleanCode)) throw new Error("Invalid room code");
 
     console.log("Joining room:", cleanCode);
 
@@ -250,7 +254,7 @@ export class RoomService {
 
         const players = room.players || [];
         const maxPlayers = room.maxPlayers || 3;
-        const existingIdx = players.findIndex((p) => p.uid === playerId);
+        const existingIdx = players.findIndex((p) => (p.uid || p.id) === playerId);
 
         // 2. Check if the room is waiting (skip if player is already registered and rejoining)
         if (existingIdx < 0 && room.status !== "waiting" && room.phase !== "waiting") {
@@ -263,7 +267,16 @@ export class RoomService {
         }
 
         // Validate other expiration, archiving conditions
-        RoomValidator.validateRoomToJoin(room);
+        RoomValidator.validateRoomToJoin(room, playerId);
+
+        // Membership is idempotent. A reload must preserve grid order, loading
+        // readiness, the chosen car, and saved race progress.
+        const playerRef = doc(db, "rooms", cleanCode, "players", playerId);
+        if (existingIdx >= 0) {
+          const playerSnap = await transaction.get(playerRef);
+          if (!playerSnap.exists()) transaction.set(playerRef, players[existingIdx]);
+          return;
+        }
 
         let updatedPlayers = [...players];
 
@@ -306,7 +319,6 @@ export class RoomService {
         });
 
         // Set player subcollection
-        const playerRef = doc(db, "rooms", cleanCode, "players", playerId);
         transaction.set(playerRef, newPlayer);
       });
     } catch (e: any) {
@@ -330,11 +342,12 @@ export class RoomService {
   }
 
   /**
-   * Leaves a room. If user was the Host and leaves before the race starts, delete the room automatically.
+   * Explicit leave/kick only. Network loss, socket close, route changes and
+   * listener cleanup must never call this destructive membership operation.
    */
   public static async leaveRoom(roomCode: string, uid: string): Promise<void> {
     const cleanCode = roomCode.toUpperCase().trim();
-    if (!cleanCode) return;
+    if (!cleanCode || !uid) return;
 
     const roomRef = doc(db, "rooms", cleanCode);
     try {
@@ -345,10 +358,10 @@ export class RoomService {
         const room = snap.data() as RoomState;
         const players = room.players || [];
         
-        const isPlayerIn = players.some((p) => p.uid === uid);
+        const isPlayerIn = players.some((p) => (p.uid || p.id) === uid);
         if (!isPlayerIn) return;
 
-        const updatedPlayers = players.filter((p) => p.uid !== uid);
+        const updatedPlayers = players.filter((p) => (p.uid || p.id) !== uid);
         const updatedSelectedCars = { ...room.selectedCars };
         delete updatedSelectedCars[uid];
 
@@ -364,7 +377,7 @@ export class RoomService {
         if (originalCount <= 2) {
           transaction.delete(roomRef);
           for (const p of players) {
-            const pRef = doc(db, "rooms", cleanCode, "players", p.uid);
+            const pRef = doc(db, "rooms", cleanCode, "players", p.uid || p.id!);
             transaction.delete(pRef);
           }
           return;
@@ -384,13 +397,13 @@ export class RoomService {
           const sortedRemaining = [...updatedPlayers].sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
           if (sortedRemaining.length > 0) {
             const newHost = sortedRemaining[0];
-            nextHostId = newHost.uid;
-            nextHostName = newHost.playerName;
+            nextHostId = newHost.uid || newHost.id!;
+            nextHostName = newHost.playerName || newHost.nickname || newHost.name || "Host";
 
             // Update the new host's details in players array to have isHost = true
             const finalPlayers = updatedPlayers.map((p) => {
-              if (p.uid === newHost.uid) {
-                return { ...p, isHost: true, ready: true, isReady: true };
+              if ((p.uid || p.id) === nextHostId) {
+                return { ...p, isHost: true };
               }
               return p;
             });
@@ -407,8 +420,8 @@ export class RoomService {
             });
 
             // Also update the subcollection player document for the new host
-            const newHostRef = doc(db, "rooms", cleanCode, "players", newHost.uid);
-            transaction.update(newHostRef, { isHost: true, ready: true, isReady: true });
+            const newHostRef = doc(db, "rooms", cleanCode, "players", nextHostId);
+            transaction.set(newHostRef, { isHost: true }, { merge: true });
           } else {
             // No players remaining, delete room
             transaction.delete(roomRef);
@@ -449,7 +462,7 @@ export class RoomService {
 
         transaction.delete(roomRef);
         for (const p of players) {
-          const pRef = doc(db, "rooms", cleanCode, "players", p.uid);
+          const pRef = doc(db, "rooms", cleanCode, "players", p.uid || p.id!);
           transaction.delete(pRef);
         }
       });
@@ -473,6 +486,8 @@ export class RoomService {
         transaction.update(roomRef, {
           status,
           phase: status, // compatibility
+          ...(status === "racing" && ["waiting", "starting"].includes(snap.data().status)
+            ? { raceStarted: false, countdownStartTime: null } : {}),
           updatedAt: serverTimestamp(),
         });
       });
@@ -518,7 +533,7 @@ export class RoomService {
       const envValue = updates.environment || currentMapObj.environment || "Forest";
 
       if (updates.mapId || updates.mapType || updates.laps !== undefined || updates.weather || updates.environment) {
-        const mapObj = getSelectedMapObj(mapId, lapsValue);
+        const mapObj: NonNullable<RoomState["selectedMap"]> = getSelectedMapObj(mapId, lapsValue);
         // Overwrite weather and environment if provided
         if (updates.weather) mapObj.weather = updates.weather;
         if (updates.environment) mapObj.environment = updates.environment;
@@ -553,6 +568,9 @@ export class RoomService {
 
         const room = snap.data() as RoomState;
         const players = room.players || [];
+        if (!players.some((p) => (p.uid || p.id) === playerId)) {
+          throw new Error("Player is no longer a member of this room.");
+        }
         
         const updatedPlayers = players.map((p) => {
           if (p.uid === playerId) {
@@ -603,6 +621,9 @@ export class RoomService {
 
         const room = snap.data() as RoomState;
         const players = room.players || [];
+        if (!players.some((p) => (p.uid || p.id) === playerId)) {
+          throw new Error("Player is no longer a member of this room.");
+        }
         
         const isCompleted = progress >= 100 || mapReady;
 
@@ -658,6 +679,7 @@ export class RoomService {
       vehicleInitialized?: boolean;
       ready?: boolean;
       sceneReady?: boolean;
+      connected?: boolean;
     }
   ): Promise<void> {
     const cleanCode = roomCode.toUpperCase().trim();
@@ -671,6 +693,9 @@ export class RoomService {
 
         const room = snap.data() as RoomState;
         const players = room.players || [];
+        if (!players.some((p) => (p.uid || p.id) === playerId)) {
+          throw new Error("Player is no longer a member of this room.");
+        }
 
         const updatedPlayers = players.map((p) => {
           if (p.uid === playerId || p.id === playerId) {
@@ -690,7 +715,7 @@ export class RoomService {
 
         transaction.set(playerRef, {
           ...status,
-          isReady: status.ready !== undefined ? status.ready : true,
+          ...(status.ready !== undefined ? { isReady: status.ready } : {}),
         }, { merge: true });
       });
     } catch (e) {
@@ -712,36 +737,13 @@ export class RoomService {
 
     return onSnapshot(
       roomRef,
+      { includeMetadataChanges: true },
       (snap) => {
+        const metadata = snap.metadata;
         if (snap.exists()) {
-          const data = snap.data() as any;
-          
-          // Calculate/estimate clock offset using updatedAt from server to keep countdowns perfectly in sync
-          if (data.updatedAt && snap.metadata.hasPendingWrites === false) {
-            const serverMillis = data.updatedAt.toMillis ? data.updatedAt.toMillis() : new Date(data.updatedAt).getTime();
-            const localMillis = Date.now();
-            const offset = serverMillis - localMillis;
-            import("./multiplayerRaceStartSync").then(({ setEstimatedServerTimeOffset }) => {
-              setEstimatedServerTimeOffset(offset);
-            }).catch((err) => {
-              console.warn("Failed to set estimated server time offset dynamically", err);
-            });
-          }
-
-          // Normalize selectedCar and mapType if they are stored as objects
-          const selectedCarId = data.selectedCar && typeof data.selectedCar === "object" ? data.selectedCar.id : (data.selectedCar || "ferrari");
-          const mapId = data.selectedMap && typeof data.selectedMap === "object" ? data.selectedMap.id : (data.mapType || "map1");
-          
-          onUpdate({
-            ...data,
-            selectedCar: selectedCarId,
-            mapType: mapId,
-            mapId: mapId,
-            code: cleanCode,
-            id: cleanCode,
-            ownerUid: data.hostId || data.ownerUid,
-          });
-        } else {
+          onUpdate(normalizeRoom(snap.data(), cleanCode));
+        } else if (!metadata.fromCache && !metadata.hasPendingWrites) {
+          // An empty local cache (especially offline) is not proof of deletion.
           onUpdate(null);
         }
       },
@@ -750,6 +752,12 @@ export class RoomService {
         handleFirestoreError(err, OperationType.GET, `rooms/${cleanCode}`);
       },
     );
+  }
+
+  public static async getRoom(roomCode: string): Promise<RoomState | null> {
+    const code = RoomValidator.normalizeCode(roomCode);
+    const snap = await getDoc(doc(db, "rooms", code));
+    return snap.exists() ? normalizeRoom(snap.data(), code) : null;
   }
 
   /**
@@ -783,47 +791,23 @@ export class RoomService {
       const cutoff = 30 * 60 * 1000; // 30 minutes
 
       for (const d of snap.docs) {
-        const room = d.data() as RoomState;
-        
-        // Skip deleting rooms that are starting or racing (active game sessions)
-        if (room.status === "starting" || room.status === "racing") {
-          continue;
-        }
-
-        let lastActiveTime = 0;
-        const timeSource = room.updatedAt || room.createdAt;
-
-        if (timeSource) {
-          if (typeof timeSource.toMillis === "function") {
-            lastActiveTime = timeSource.toMillis();
-          } else if (typeof timeSource.toDate === "function") {
-            lastActiveTime = timeSource.toDate().getTime();
-          } else if (timeSource.seconds) {
-            lastActiveTime = timeSource.seconds * 1000;
-          } else if (typeof timeSource === "number") {
-            lastActiveTime = timeSource;
+        // Re-read inside a transaction: a join/start after the query must cancel
+        // cleanup rather than delete a room that has just become active.
+        await runTransaction(db, async (transaction) => {
+          const current = await transaction.get(d.ref);
+          if (!current.exists()) return;
+          const room = current.data() as RoomState;
+          if (room.hostId !== auth.currentUser?.uid) return;
+          if (["starting", "countdown", "racing"].includes(room.status)) return;
+          const activity = RoomValidator.timestampMillis(room.updatedAt || room.createdAt);
+          const expiry = RoomValidator.timestampMillis(room.expiresAt);
+          const lastActive = activity ?? (expiry === null ? now : expiry - cutoff);
+          if (now - lastActive <= cutoff) return;
+          for (const player of room.players || []) {
+            transaction.delete(doc(db, "rooms", d.id, "players", player.uid || player.id!));
           }
-        }
-
-        // If lastActiveTime couldn't be parsed, fallback to expiresAt or now
-        if (lastActiveTime === 0) {
-          if (room.expiresAt) {
-            const expDate = room.expiresAt instanceof Date ? room.expiresAt : (typeof room.expiresAt.toDate === "function" ? room.expiresAt.toDate() : new Date(room.expiresAt));
-            lastActiveTime = expDate.getTime() - cutoff;
-          } else {
-            lastActiveTime = now;
-          }
-        }
-
-        if (now - lastActiveTime > cutoff) {
-          console.log(`Passive expired check: Deleting expired room doc ${d.id}`);
-          const playersRef = collection(db, "rooms", d.id, "players");
-          const plSnap = await getDocs(playersRef);
-          for (const plDoc of plSnap.docs) {
-            await deleteDoc(doc(db, "rooms", d.id, "players", plDoc.id));
-          }
-          await deleteDoc(doc(db, "rooms", d.id));
-        }
+          transaction.delete(d.ref);
+        });
       }
     } catch (err: any) {
       // Normal players are not authorized to list or delete other rooms.

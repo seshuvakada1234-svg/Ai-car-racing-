@@ -8,6 +8,7 @@ import { handleFirestoreError, OperationType } from "../lib/firestoreError";
 import { NormalRoomService, NormalRoom, NormalPlayer } from "../multiplayer/NormalRoomService";
 import { RoomManager } from "../multiplayer/RoomManager";
 import { measureServerTimeOffset } from "../multiplayer/multiplayerRaceStartSync";
+import { loadRacingMap } from "../services/racingMapAsset";
 import {
   Compass,
   Users,
@@ -166,6 +167,11 @@ export const WaitingLobbyPage: React.FC = () => {
   const [localSecondsLeft, setLocalSecondsLeft] = useState<number | null>(null);
   const [countdownMsg, setCountdownMsg] = useState("ALL PLAYERS READY");
   const [loading, setLoading] = useState(true);
+  const [roomError, setRoomError] = useState<string | null>(null);
+  const [loadedRoomCode, setLoadedRoomCode] = useState<string | null>(null);
+  const [subscriptionAttempt, setSubscriptionAttempt] = useState(0);
+  const leavingRef = useRef(false);
+  const joinAttemptRef = useRef<string | null>(null);
 
   // Map downloading status state variables
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
@@ -173,6 +179,8 @@ export const WaitingLobbyPage: React.FC = () => {
   const [totalMB, setTotalMB] = useState<number>(0);
   const [isCheckingCache, setIsCheckingCache] = useState<boolean>(true);
   const [mapReadyLocal, setMapReadyLocal] = useState<boolean>(false);
+  const [mapError, setMapError] = useState<string | null>(null);
+  const [mapAttempt, setMapAttempt] = useState(0);
 
   // Load maps from Firestore for dropdown choices
   useEffect(() => {
@@ -188,35 +196,47 @@ export const WaitingLobbyPage: React.FC = () => {
 
   const normalizedCode = (roomCode || "").toUpperCase().trim();
   const isHost = room && profile ? room.ownerUid === profile.uid : false;
-  const allPlayersReady = room ? (players.length === (room.maxPlayers || 3) && players.every(p => p.ready === true)) : false;
+  const isMember = !!profile?.uid && !!room?.players.includes(profile.uid);
+  const allPlayersReady = room ? (mapReadyLocal && players.length === (room.maxPlayers || 3) && players.every(p => p.ready === true && p.mapReady === true)) : false;
   const allReady = allPlayersReady;
 
   // 1. Real-time Firestore Subscriptions
   useEffect(() => {
-    if (!normalizedCode) return;
+    if (!normalizedCode || !profile?.uid) return;
 
     setLoading(true);
+    setRoom(null);
+    setPlayers([]);
+    setRoomError(null);
+    setLoadedRoomCode(null);
+    joinAttemptRef.current = null;
+    const onError = (error: Error) => {
+      setRoomError(error.message);
+      setLoading(false);
+    };
     const unsubRoom = NormalRoomService.listenToRoom(normalizedCode, (updatedRoom) => {
       setRoom(updatedRoom);
+      setLoadedRoomCode(normalizedCode);
       setLoading(false);
-    });
+    }, onError);
 
     const unsubPlayers = NormalRoomService.listenToPlayers(normalizedCode, (updatedPlayers) => {
       setPlayers(updatedPlayers);
-    });
+    }, onError);
 
     return () => {
       unsubRoom();
       unsubPlayers();
     };
-  }, [normalizedCode]);
+  }, [normalizedCode, profile?.uid, subscriptionAttempt]);
 
   // 1c. Measure clock offset exactly once on entering the waiting room
-  const measuredOffsetRef = useRef(false);
+  const measuredOffsetRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!normalizedCode || !profile?.uid) return;
-    if (measuredOffsetRef.current) return;
-    measuredOffsetRef.current = true;
+    if (!normalizedCode || !profile?.uid || !isMember) return;
+    const key = `${normalizedCode}:${profile.uid}`;
+    if (measuredOffsetRef.current === key) return;
+    measuredOffsetRef.current = key;
 
     const runSync = async () => {
       try {
@@ -226,191 +246,57 @@ export const WaitingLobbyPage: React.FC = () => {
       }
     };
     runSync();
-  }, [normalizedCode, profile?.uid]);
+  }, [normalizedCode, profile?.uid, isMember]);
 
   // 1b. Automatic Map Checking and Downloading Hook
   useEffect(() => {
-    if (!room || !profile?.uid) return;
-
+    if (!isMember || !profile?.uid) return;
     let active = true;
-
+    let lastWrite = 0;
+    let writes = Promise.resolve();
+    const uid = profile.uid;
+    setMapReadyLocal(false);
+    setMapError(null);
+    setDownloadProgress(0);
+    setIsCheckingCache(true);
     async function checkAndDownloadMap() {
-      const activeMapId = room?.mapId || "race2map";
-      
-      // If it's not a GLB-based map, it is instantly ready
-      if (activeMapId !== "race2map" && activeMapId !== "racing2") {
-        if (active) {
-          setMapReadyLocal(true);
-          setIsCheckingCache(false);
-          setDownloadProgress(100);
-        }
-        try {
-          await NormalRoomService.updatePlayerDownloadStatus(
-            normalizedCode,
-            profile.uid,
-            true, // mapReady
-            100,  // progress
-            0,    // downloadedMB
-            0     // totalMB
-          );
-        } catch (e) {
-          console.error("Failed to update download status", e);
-        }
-        return;
-      }
-
-      const mapUrl = "https://pub-a248afed72844944a7565dc9cbaacbb0.r2.dev/map/Untitled12.glb";
-      const cacheName = "map-assets-cache";
-
       try {
-        if (active) {
-          setIsCheckingCache(true);
-        }
-        const cache = await caches.open(cacheName);
-        const cachedResponse = await cache.match(mapUrl);
-
-        if (cachedResponse) {
-          console.log("Map exists in browser cache!");
-          if (!active) return;
-          setMapReadyLocal(true);
-          setIsCheckingCache(false);
-          setDownloadProgress(100);
-
-          // Mark player as Map Ready in Firestore
-          await NormalRoomService.updatePlayerDownloadStatus(
-            normalizedCode,
-            profile.uid,
-            true, // mapReady
-            100,  // progress
-            45,   // downloadedMB
-            45    // totalMB
-          );
-          return;
-        }
-
-        // If it does not exist: Automatically start downloading the map.
-        console.log("Map does not exist in browser cache. Starting download...");
+        await NormalRoomService.updatePlayerDownloadStatus(normalizedCode, uid, false, 0, 0, 0);
         if (!active) return;
+        let sizeMB = 0;
+        if (room?.mapId === "race2map" || room?.mapId === "racing2") {
+          const asset = await loadRacingMap((progress) => {
+            if (!active) return;
+            const loadedMB = progress.bytesLoaded / 1024 / 1024;
+            const total = (progress.bytesTotal || 0) / 1024 / 1024;
+            setIsCheckingCache(false);
+            setDownloadProgress(progress.percentage);
+            setDownloadedMB(loadedMB);
+            setTotalMB(total);
+            if (Date.now() - lastWrite >= 1000 && progress.percentage < 100) {
+              lastWrite = Date.now();
+              writes = writes.then(async () => {
+                if (active) await NormalRoomService.updatePlayerDownloadStatus(normalizedCode, uid, false, progress.percentage, loadedMB, total);
+              }).catch((error) => console.error("[Lobby] Download progress write failed:", error));
+            }
+          });
+          sizeMB = asset.buffer.byteLength / 1024 / 1024;
+        }
+        await writes;
+        if (!active) return;
+        await NormalRoomService.updatePlayerDownloadStatus(normalizedCode, uid, true, 100, sizeMB, sizeMB);
+        if (!active) return;
+        setMapReadyLocal(true);
+        setDownloadProgress(100);
+        setDownloadedMB(sizeMB);
+        setTotalMB(sizeMB);
         setIsCheckingCache(false);
-        setDownloadProgress(0);
-
-        // Try downloading via proxy first, fall back to direct URL
-        const targetUrl = `/api/proxy?url=${encodeURIComponent(mapUrl)}`;
-        
-        let response: Response;
-        try {
-          response = await fetch(targetUrl);
-          if (!response.ok) throw new Error("Proxy fetch failed");
-        } catch (err) {
-          console.warn("Proxy fetch failed, falling back to direct URL", err);
-          response = await fetch(mapUrl);
-        }
-
-        if (!response.ok) {
-          throw new Error(`Failed to download map: ${response.statusText}`);
-        }
-
-        const reader = response.body?.getReader();
-        const contentLengthHeader = response.headers.get("Content-Length");
-        // Fallback to ~45 MB if Content-Length header is missing/chunked
-        const totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 47139152;
-        const totalMBVal = +(totalBytes / (1024 * 1024)).toFixed(1);
-        
+      } catch (error) {
+        console.error(`[Lobby] Map initialization failed in ${normalizedCode}:`, error);
         if (active) {
-          setTotalMB(totalMBVal);
-        }
-
-        if (!reader) {
-          throw new Error("ReadableStream not supported in response body.");
-        }
-
-        const chunks: Uint8Array[] = [];
-        let receivedBytes = 0;
-        let lastUpdateTime = Date.now();
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          if (value) {
-            chunks.push(value);
-            receivedBytes += value.length;
-          }
-
-          const currentPercent = Math.min(Math.round((receivedBytes / totalBytes) * 100), 99);
-          const currentMB = +(receivedBytes / (1024 * 1024)).toFixed(1);
-
-          if (active) {
-            setDownloadProgress(currentPercent);
-            setDownloadedMB(currentMB);
-          }
-
-          // Throttle Firestore updates to at most once per second
-          const now = Date.now();
-          if (now - lastUpdateTime > 1000) {
-            lastUpdateTime = now;
-            await NormalRoomService.updatePlayerDownloadStatus(
-              normalizedCode,
-              profile.uid,
-              false, // mapReady
-              currentPercent,
-              currentMB,
-              totalMBVal
-            ).catch(err => console.error("Error writing progress to db:", err));
-          }
-        }
-
-        // Complete: verify file size
-        const combinedBlob = new Blob(chunks);
-        if (combinedBlob.size < 1000) {
-          throw new Error("Downloaded file is invalid or too small");
-        }
-
-        // Save to browser cache
-        await cache.put(mapUrl, new Response(combinedBlob, {
-          headers: {
-            "Content-Type": "model/gltf-binary",
-            "Content-Length": combinedBlob.size.toString()
-          }
-        }));
-
-        console.log("Map downloaded and successfully saved to browser cache!");
-        
-        if (active) {
-          setMapReadyLocal(true);
-          setDownloadProgress(100);
-          setDownloadedMB(totalMBVal);
-        }
-
-        // Mark player as Map Ready in Firestore
-        await NormalRoomService.updatePlayerDownloadStatus(
-          normalizedCode,
-          profile.uid,
-          true, // mapReady
-          100,
-          totalMBVal,
-          totalMBVal
-        );
-
-      } catch (err) {
-        console.error("Map downloading failed:", err);
-        // Fallback gracefully so they are not permanently blocked in case of network issue
-        if (active) {
-          setMapReadyLocal(true);
-          setDownloadProgress(100);
+          setMapError(error instanceof Error ? error.message : String(error));
+          setMapReadyLocal(false);
           setIsCheckingCache(false);
-        }
-        try {
-          await NormalRoomService.updatePlayerDownloadStatus(
-            normalizedCode,
-            profile.uid,
-            true, // mapReady
-            100,
-            45,
-            45
-          );
-        } catch (e) {
-          console.error(e);
         }
       }
     }
@@ -420,11 +306,11 @@ export const WaitingLobbyPage: React.FC = () => {
     return () => {
       active = false;
     };
-  }, [room?.mapId, profile?.uid, normalizedCode]);
+  }, [room?.mapId, profile?.uid, normalizedCode, isMember, mapAttempt]);
 
   // 2. Automatically return to Garage if the room is canceled/deleted
   useEffect(() => {
-    if (!loading && !room) {
+    if (!loading && loadedRoomCode === normalizedCode && !room && !roomError) {
       const voluntary = sessionStorage.getItem("voluntarily_leaving_room");
       if (voluntary) {
         sessionStorage.removeItem("voluntarily_leaving_room");
@@ -432,9 +318,10 @@ export const WaitingLobbyPage: React.FC = () => {
         console.log("Room deleted or canceled. Returning to garage.");
         sessionStorage.setItem("room_closed_no_opponents", "true");
       }
+      RoomManager.clearSession(normalizedCode);
       navigate("/garage");
     }
-  }, [room, loading, navigate]);
+  }, [room, loading, navigate, loadedRoomCode, normalizedCode, roomError]);
 
   // Track if local player became the Host during waiting lobby
   const prevHostIdRef = useRef<string | null>(null);
@@ -455,15 +342,16 @@ export const WaitingLobbyPage: React.FC = () => {
 
   // 3. Auto-Join Trigger
   useEffect(() => {
-    if (!room) return;
-
-    const isPlayerIn = players.some((p) => p.uid === profile?.uid);
-    if (!loading && players.length > 0 && !isPlayerIn && profile) {
+    if (!room || isMember || leavingRef.current || roomError) return;
+    const key = `${normalizedCode}:${profile?.uid}`;
+    if (!loading && profile && joinAttemptRef.current !== key) {
+      joinAttemptRef.current = key;
       NormalRoomService.joinRoom(normalizedCode, profile.uid, profile.name, profile.photoURL).catch((err) => {
         console.error("Auto-join failed:", err);
+        setRoomError(err.message);
       });
     }
-  }, [room?.status, players.length, isHost, profile, loading, normalizedCode]);
+  }, [room, isMember, profile, loading, normalizedCode, roomError]);
 
   // 4. Local Countdown Engager
   useEffect(() => {
@@ -481,47 +369,40 @@ export const WaitingLobbyPage: React.FC = () => {
       return;
     }
 
-    if (room.status !== "starting" && room.status !== "countdown") {
+    if (room.status !== "starting" || !isMember) {
       setLocalSecondsLeft(null);
       return;
     }
 
-    if (localSecondsLeft === null) {
-      setLocalSecondsLeft(3);
-      setCountdownMsg("GET READY");
-    }
-
+    let secondsLeft = 3;
+    let launchTimer: ReturnType<typeof setTimeout> | undefined;
+    setLocalSecondsLeft(secondsLeft);
+    setCountdownMsg("GET READY");
     const interval = setInterval(() => {
-      setLocalSecondsLeft((prev) => {
-        if (prev === null) return 3;
-        if (prev <= 1) {
-          clearInterval(interval);
-          setCountdownMsg("GO!");
-
-          setTimeout(() => {
-            if (isHost) {
-              NormalRoomService.setRoomStatus(normalizedCode, "racing").catch((err) => {
-                console.error("Error setting status to racing:", err);
-              });
-            }
-            navigate(`/race/${normalizedCode}`);
-          }, 600);
-
-          return 0;
+      secondsLeft--;
+      setLocalSecondsLeft(secondsLeft);
+      if (secondsLeft > 0) return;
+      clearInterval(interval);
+      setCountdownMsg("GO!");
+      launchTimer = setTimeout(() => {
+        if (isHost && !leavingRef.current) {
+          NormalRoomService.setRoomStatus(normalizedCode, "racing").catch((error) => {
+            console.error("[Lobby] Race launch failed:", error);
+            setRoomError(error.message);
+          });
         }
-        return prev - 1;
-      });
+      }, 600);
     }, 1000);
 
-    return () => clearInterval(interval);
-  }, [room?.status, allReady, isHost, navigate, normalizedCode, localSecondsLeft]);
+    return () => { clearInterval(interval); clearTimeout(launchTimer); };
+  }, [room?.status, allReady, isHost, isMember, normalizedCode]);
 
   // Redirect to active race if state updates to racing
   useEffect(() => {
-    if (room?.status === "racing") {
+    if (isMember && (room?.status === "racing" || room?.status === "countdown")) {
       navigate(`/race/${normalizedCode}`);
     }
-  }, [room?.status, navigate, normalizedCode]);
+  }, [room?.status, isMember, navigate, normalizedCode]);
 
   const fallbackCopy = (text: string) => {
     try {
@@ -561,12 +442,15 @@ export const WaitingLobbyPage: React.FC = () => {
   // Leave room triggers
   const handleLeave = async () => {
     if (!profile) return;
+    leavingRef.current = true;
     try {
       sessionStorage.setItem("voluntarily_leaving_room", "true");
       await NormalRoomService.leaveOrCancelRoom(normalizedCode, profile.uid);
       navigate("/garage");
     } catch (err) {
       console.error("Error leaving room:", err);
+      leavingRef.current = false;
+      toast.error(err instanceof Error ? err.message : "Failed to leave room.");
     }
   };
 
@@ -619,6 +503,17 @@ export const WaitingLobbyPage: React.FC = () => {
       console.error("Toggle ready failed:", err);
     }
   };
+
+  if (roomError) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center text-white space-y-4 font-sans p-6">
+        <AlertCircle className="w-10 h-10 text-red-400" />
+        <p role="alert" className="text-sm text-red-300">{roomError}</p>
+        <button className="px-4 py-2 bg-slate-900 rounded-lg" onClick={() => setSubscriptionAttempt((n) => n + 1)}>Retry connection</button>
+        <button onClick={() => navigate("/garage")}>Return to Garage</button>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -960,7 +855,7 @@ export const WaitingLobbyPage: React.FC = () => {
                       <span className="text-white font-black">{carSpec.acceleration} (0-100)</span>
                     </div>
                     <div className="h-1 w-full bg-slate-950 border border-white/5 rounded-full overflow-hidden">
-                      <div className="h-full bg-pink-500 shadow-[0_0_4px_#ec4899] rounded-full" style={{ width: carSpec.id === "bugatti" ? "95%" : carSpec.id === "porsche" ? "75%" : "72%" }} />
+                      <div className="h-full bg-pink-500 shadow-[0_0_4px_#ec4899] rounded-full" style={{ width: activeCarId === "bugatti" ? "95%" : activeCarId === "porsche" ? "75%" : "72%" }} />
                     </div>
                   </div>
 
@@ -1098,7 +993,12 @@ export const WaitingLobbyPage: React.FC = () => {
               {/* Map cache verification and download status panel */}
               {(room?.mapId === "race2map" || room?.mapId === "racing2") && (
                 <div className="p-1 px-1.5 bg-slate-900/60 border border-white/5 rounded-lg text-left shrink-0">
-                  {isCheckingCache ? (
+                  {mapError ? (
+                    <div role="alert" className="text-[8px] text-rose-400 font-mono space-y-1">
+                      <p className="max-h-16 overflow-y-auto break-words">{mapError}</p>
+                      <button className="font-bold underline" onClick={() => setMapAttempt((attempt) => attempt + 1)}>RETRY MAP DOWNLOAD</button>
+                    </div>
+                  ) : isCheckingCache ? (
                     <div className="flex items-center gap-1 text-[6.5px] text-slate-400 font-mono leading-none py-0.5">
                       <Loader2 className="w-2 h-2 animate-spin text-cyan-400 shrink-0" />
                       <span>Verifying cache...</span>

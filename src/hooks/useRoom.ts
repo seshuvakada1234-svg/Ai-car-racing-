@@ -3,9 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useEffect, useCallback, useSyncExternalStore } from "react";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "../lib/firebase";
 import { RoomManager, RoomData } from "../multiplayer/RoomManager";
-import { SyncManager } from "../multiplayer/SyncManager";
+import { RoomValidator } from "../multiplayer/RoomValidator";
 
 export interface UseRoomReturn {
   room: RoomData | null;
@@ -13,6 +15,8 @@ export interface UseRoomReturn {
   isHost: boolean;
   loading: boolean;
   error: string | null;
+  roomMissing: boolean;
+  retryRoom: () => void;
   createRoom: (
     nickname: string,
     carId: string,
@@ -30,176 +34,153 @@ export interface UseRoomReturn {
   setReady: () => Promise<void>;
 }
 
-// Global shared state for useRoom callbacks and variables (prevents multiple duplicate listeners on subpages)
-let globalRoom: RoomData | null = null;
-let globalRoomCode: string | null = RoomManager.getCurrentCode();
-let globalLoading = false;
-let globalError: string | null = null;
+interface RoomSnapshot {
+  room: RoomData | null;
+  roomCode: string | null;
+  loading: boolean;
+  error: string | null;
+  roomMissing: boolean;
+}
 
+const emptySnapshot: RoomSnapshot = {
+  room: null, roomCode: null, loading: false, error: null, roomMissing: false,
+};
+let snapshot = emptySnapshot;
 const listeners = new Set<() => void>();
+let unsubscribeRoom: (() => void) | null = null;
+let unsubscribeSession: (() => void) | null = null;
+let unsubscribeAuth: (() => void) | null = null;
+let subscribedUid: string | null = null;
+let generation = 0;
 
-function updateGlobalState(room: RoomData | null, roomCode: string | null, loading: boolean, error: string | null) {
-  globalRoom = room;
-  globalRoomCode = roomCode;
-  globalLoading = loading;
-  globalError = error;
+function publish(update: Partial<RoomSnapshot>) {
+  snapshot = { ...snapshot, ...update };
   listeners.forEach((listener) => listener());
 }
 
-let unsubscribeFromSync: (() => void) | null = null;
+function detachRoomListener() {
+  generation++;
+  unsubscribeRoom?.();
+  unsubscribeRoom = null;
+  subscribedUid = null;
+}
 
-function subscribeToRoom(code: string) {
-  if (unsubscribeFromSync) {
-    unsubscribeFromSync();
+function syncRoom(force = false) {
+  const code = RoomManager.getCurrentCode();
+  const uid = auth.currentUser?.uid;
+  if (!code || !uid) {
+    detachRoomListener();
+    publish({ ...emptySnapshot, roomCode: code, loading: !!code });
+    return;
   }
-  unsubscribeFromSync = SyncManager.attach(code, (updatedRoom) => {
-    updateGlobalState(updatedRoom, code, false, null);
+  if (!force && unsubscribeRoom && snapshot.roomCode === code && subscribedUid === uid) return;
+
+  detachRoomListener();
+  const currentGeneration = generation;
+  subscribedUid = uid;
+  // This happens BEFORE onSnapshot can deliver anything, including cached data.
+  publish({ ...emptySnapshot, roomCode: code, loading: true });
+  // Own this listener directly. LiveModeManager's SyncManager subscription must
+  // not replace the shared React room subscription.
+  unsubscribeRoom = RoomManager.listenToRoom(code, (room) => {
+    if (generation !== currentGeneration) return;
+    publish({ room, roomCode: code, loading: false, error: null, roomMissing: room === null });
+  }, (error) => {
+    if (generation !== currentGeneration) return;
+    console.error(`[useRoom] Subscription failed for ${code}:`, error);
+    publish({ loading: false, error: error.message, roomMissing: false });
   });
 }
 
-function unsubscribeFromRoom() {
-  if (unsubscribeFromSync) {
-    unsubscribeFromSync();
-    unsubscribeFromSync = null;
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  if (listeners.size === 1) {
+    unsubscribeSession = RoomManager.subscribeToSession(() => syncRoom());
+    unsubscribeAuth = onAuthStateChanged(auth, () => syncRoom());
+    syncRoom();
   }
-  updateGlobalState(null, null, false, null);
-  SyncManager.detach();
-}
-
-// Initial bootstrap if room code is available on load
-if (globalRoomCode && !unsubscribeFromSync) {
-  subscribeToRoom(globalRoomCode);
-}
-
-export function useRoom(): UseRoomReturn {
-  const [, forceUpdate] = useState({});
-
-  useEffect(() => {
-    const listener = () => forceUpdate({});
-    listeners.add(listener);
-
-    // Dynamic Safe Reconnect trigger on mount if disconnected or different code
-    const code = RoomManager.getCurrentCode();
-    if (code && code !== globalRoomCode) {
-      subscribeToRoom(code);
-    } else if (!globalRoom && !globalLoading && code) {
-      setImmediateReconnect(code);
-    }
-
-    return () => {
-      listeners.delete(listener);
-    };
-  }, []);
-
-  const setImmediateReconnect = async (code: string) => {
-    try {
-      const room = await RoomManager.attemptReconnect();
-      if (room) {
-        subscribeToRoom(room.roomCode);
-      }
-    } catch (e: any) {
-      console.warn("Silent mount-period reconnection abort:", e);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) {
+      unsubscribeSession?.();
+      unsubscribeAuth?.();
+      unsubscribeSession = unsubscribeAuth = null;
+      detachRoomListener();
+      snapshot = emptySnapshot;
     }
   };
+}
 
-  const createRoom = useCallback(
-    async (
-      nickname: string,
-      carId: string,
-      carColor?: string,
-      isLiveMode = false,
-      difficulty: "easy" | "medium" | "hard" = "medium",
-      map = "map1",
-      laps = 3,
-      weather = "clear",
-    ): Promise<string> => {
-      updateGlobalState(globalRoom, globalRoomCode, true, null);
-      try {
-        const code = await RoomManager.createRoom(
-          nickname,
-          carId,
-          carColor,
-          isLiveMode,
-          difficulty,
-          map,
-          laps,
-          weather,
-        );
-        subscribeToRoom(code);
-        return code;
-      } catch (e: any) {
-        updateGlobalState(globalRoom, globalRoomCode, false, e.message);
-        throw e;
-      }
-    },
-    [],
-  );
+const getSnapshot = () => snapshot;
+const getServerSnapshot = () => emptySnapshot;
 
-  const joinRoom = useCallback(
-    async (code: string, nickname: string, carId: string, carColor?: string): Promise<void> => {
-      updateGlobalState(globalRoom, globalRoomCode, true, null);
-      try {
-        await RoomManager.joinRoom(code, nickname, carId, carColor);
-        subscribeToRoom(code.toUpperCase());
-      } catch (e: any) {
-        updateGlobalState(globalRoom, globalRoomCode, false, e.message);
-        throw e;
-      }
-    },
-    [],
-  );
+export function useRoom(requestedCode?: string): UseRoomReturn {
+  const code = requestedCode === undefined ? undefined : RoomValidator.normalizeCode(requestedCode);
+  useEffect(() => {
+    if (code && RoomValidator.isValidCode(code)) RoomManager.rememberSession(code);
+  }, [code]);
 
-  const leaveRoom = useCallback(async (): Promise<void> => {
-    if (!globalRoomCode) return;
-    const code = globalRoomCode;
-    const playerId = RoomManager.getCurrentPlayerId();
-    unsubscribeFromRoom();
+  const state = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  // A URL change must not expose the previous room for even one render.
+  const matchesRequest = code === undefined || state.roomCode === code;
+  const invalidCode = code !== undefined && !RoomValidator.isValidCode(code);
+  const room = matchesRequest && !invalidCode ? state.room : null;
 
+  const createRoom = useCallback(async (
+    nickname: string, carId: string, carColor?: string, isLiveMode = false,
+    difficulty: "easy" | "medium" | "hard" = "medium", map = "map1", laps = 3, weather = "clear",
+  ) => {
+    publish({ loading: true, error: null, roomMissing: false });
     try {
-      localStorage.removeItem("activeRoomCode");
-      sessionStorage.removeItem("last_room_code");
-    } catch (e) {}
-
-    const { RoomService } = await import("../multiplayer/RoomService");
-    await RoomService.leaveRoom(code, playerId);
-  }, []);
-
-  const deleteRoom = useCallback(async (): Promise<void> => {
-    if (!globalRoomCode) return;
-    const code = globalRoomCode;
-    unsubscribeFromRoom();
-    await RoomManager.deleteRoom(code);
-  }, []);
-
-  const updateSettings = useCallback(
-    async (settings: Partial<Pick<RoomData, "map" | "difficulty" | "laps" | "weather">>): Promise<void> => {
-      if (!globalRoomCode) return;
-      await RoomManager.updateHostSettings(globalRoomCode, settings);
-    },
-    [],
-  );
-
-  const setReady = useCallback(async (): Promise<void> => {
-    if (!globalRoomCode) return;
-    const playerId = RoomManager.getCurrentPlayerId();
-    if (playerId) {
-      await RoomManager.setPlayerReady(globalRoomCode, playerId);
+      const createdCode = await RoomManager.createRoom(nickname, carId, carColor, isLiveMode, difficulty, map, laps, weather);
+      syncRoom();
+      return createdCode;
+    } catch (error) {
+      publish({ loading: false, error: error instanceof Error ? error.message : String(error) });
+      throw error;
     }
   }, []);
 
-  const isHost = globalRoom ? RoomManager.isHost(globalRoom) : false;
+  const joinRoom = useCallback(async (roomCode: string, nickname: string, carId: string, carColor?: string) => {
+    publish({ loading: true, error: null, roomMissing: false });
+    try {
+      await RoomManager.joinRoom(roomCode, nickname, carId, carColor);
+      syncRoom(true);
+    } catch (error) {
+      publish({ loading: false, error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
+  }, []);
+
+  const leaveRoom = useCallback(async () => {
+    const activeCode = RoomManager.getCurrentCode();
+    if (activeCode) await RoomManager.closeRoom(activeCode);
+  }, []);
+
+  const deleteRoom = useCallback(async () => {
+    const activeCode = RoomManager.getCurrentCode();
+    if (activeCode) await RoomManager.deleteRoom(activeCode);
+  }, []);
+
+  const updateSettings = useCallback(async (settings: Partial<Pick<RoomData, "map" | "difficulty" | "laps" | "weather">>) => {
+    const activeCode = RoomManager.getCurrentCode();
+    if (activeCode) await RoomManager.updateHostSettings(activeCode, settings);
+  }, []);
+
+  const setReady = useCallback(async () => {
+    const activeCode = RoomManager.getCurrentCode();
+    const playerId = RoomManager.getCurrentPlayerId();
+    if (activeCode && playerId) await RoomManager.setPlayerReady(activeCode, playerId);
+  }, []);
 
   return {
-    room: globalRoom,
-    roomCode: globalRoomCode,
-    isHost,
-    loading: globalLoading,
-    error: globalError,
-    createRoom,
-    joinRoom,
-    leaveRoom,
-    deleteRoom,
-    updateSettings,
-    setReady,
+    room,
+    roomCode: code ?? state.roomCode,
+    isHost: !!room && RoomManager.isHost(room),
+    loading: !invalidCode && (!matchesRequest || state.loading),
+    error: invalidCode ? "Invalid room code" : matchesRequest ? state.error : null,
+    roomMissing: matchesRequest && !invalidCode && state.roomMissing,
+    retryRoom: () => syncRoom(true),
+    createRoom, joinRoom, leaveRoom, deleteRoom, updateSettings, setReady,
   };
 }

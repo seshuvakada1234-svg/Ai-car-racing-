@@ -3,6 +3,7 @@ let activeRoomCode = "";
 let activePlayerId = "";
 let lastSendTime = 0;
 let activeOnRaceStart: ((startTime: number) => void) | null = null;
+let activeCleanup: (() => void) | null = null;
 
 /**
  * Triggers server-authoritative race start via WebSocket
@@ -86,13 +87,22 @@ export function sendVehicleUpdate(car: any): void {
  * Disconnects the active vehicle WebSocket connection.
  */
 export function disconnectVehicleSocket(): void {
-  console.log("[WS CLIENT] Disconnecting vehicle WebSocket manually.");
-  if (socket) {
-    try {
-      socket.close();
-    } catch (e) {}
-    socket = null;
-  }
+  activeCleanup?.();
+  activeCleanup = null;
+}
+
+export function resolveVehicleSocketUrl(baseUrl: string, pageUrl: string, roomCode: string, playerId: string): string {
+  const page = new URL(pageUrl);
+  const base = baseUrl.trim();
+  const url = new URL(base ? (/^[a-z]+:\/\//i.test(base) ? base : `wss://${base}`) : page.origin);
+  if (url.protocol === "https:") url.protocol = "wss:";
+  if (url.protocol === "http:") url.protocol = "ws:";
+  if (url.protocol !== "wss:" && url.protocol !== "ws:") throw new Error("Invalid vehicle relay URL protocol");
+  if (page.protocol === "https:" && url.protocol !== "wss:") throw new Error("An HTTPS game requires a wss:// vehicle relay");
+  if (url.pathname === "/") url.pathname = base ? "/ws" : "/ws/vehicle";
+  url.searchParams.set("roomCode", roomCode.trim().toUpperCase());
+  url.searchParams.set("playerId", playerId);
+  return url.toString();
 }
 
 /**
@@ -105,122 +115,75 @@ export function connectVehicleSocket(
   onPlayerLeft: (playerId: string) => void,
   onRaceStart?: (startTime: number) => void
 ): () => void {
-  // Close any existing socket first to avoid leak
   disconnectVehicleSocket();
-
-  activeRoomCode = roomCode.toUpperCase().trim();
-  activePlayerId = playerId;
-  lastSendTime = 0;
-  activeOnRaceStart = onRaceStart || null;
-
-  const isHttps = window.location.protocol === "https:";
-  const wsProtocol = isHttps ? "wss:" : "ws:";
-  
-  // Check if environment variable is set
-  let baseUrl = import.meta.env.VITE_VEHICLE_WS_URL || "";
-  
-  if (!baseUrl) {
-    // Standard local fallback dynamically targeting host root
-    baseUrl = `${wsProtocol}//${window.location.host}`;
-  } else {
-    // Ensure correct protocol in environment variable values
-    if (!baseUrl.startsWith("ws://") && !baseUrl.startsWith("wss://")) {
-      baseUrl = `${wsProtocol}//${baseUrl}`;
-    }
+  const code = roomCode.toUpperCase().trim();
+  let disposed = false;
+  let current: WebSocket | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let retries = 0;
+  let url: string;
+  try {
+    url = resolveVehicleSocketUrl(import.meta.env.VITE_VEHICLE_WS_URL || "", window.location.href, code, playerId);
+  } catch (error) {
+    console.error("[WS CLIENT] Relay configuration failed:", error);
+    return () => {};
   }
 
-  // When falling back to standard local host proxy we route to /ws/vehicle
-  const isLocalHost = baseUrl.includes("localhost") || baseUrl.includes("3000") || baseUrl.includes(window.location.host);
-  const pathPrefix = isLocalHost ? "/ws/vehicle" : "/ws";
-
-  // Build connection URL with roomCode and playerId query parameters
-  const url = `${baseUrl.replace(/\/+$/, "")}${pathPrefix}?roomCode=${encodeURIComponent(activeRoomCode)}&playerId=${encodeURIComponent(activePlayerId)}`;
-
-  console.log(`[WS CLIENT] Connecting to vehicle WebSocket relay at: ${url}`);
-  
-  const ws = new WebSocket(url);
-  socket = ws;
-
-  ws.onopen = () => {
-    console.log("[WS CLIENT] WebSocket opened");
-    console.log("[WS CLIENT] Connection established successfully.");
+  const open = () => {
+    if (disposed) return;
+    console.log(`[WS CLIENT] Connecting to ${url}`);
+    let ws: WebSocket;
     try {
-      ws.send(
-        JSON.stringify({
-          type: "join",
-          roomCode: activeRoomCode,
-          playerId: activePlayerId,
-        })
-      );
-      console.log("[WS CLIENT] Join packet sent for room:", activeRoomCode);
-    } catch (err) {
-      console.warn("[WS CLIENT] Error sending join packet:", err);
+      ws = new WebSocket(url);
+    } catch (error) {
+      console.error(`[WS CLIENT] Could not open relay for ${code}; Firestore remains available:`, error);
+      return;
     }
-  };
-
-  ws.onmessage = (event) => {
-    console.log("[CLIENT B] Raw WebSocket message", event.data);
-    try {
-      const data = JSON.parse(event.data);
-      
-      if (data.type === "vehicleUpdate" || data.type === "vehicle_update") {
-        console.log("[CLIENT B] Parsed vehicleUpdate", data);
-        const { playerId, roomCode } = data;
-        if (playerId === activePlayerId) return; // ignore self
-        
-        console.log("[CLIENT B] onRemoteUpdate", playerId);
-        onRemoteUpdate(playerId, data);
-        return;
-      }
-
-      if (data.type === "player_list" || data.type === "playerList") {
-        console.log("[WS CLIENT] player_list received", data);
-        console.log("[WS CLIENT] Calling onRemoteUpdate with empty playerId for player_list");
-        onRemoteUpdate("", data);
-        return;
-      }
-
-      if (data.type === "playerLeft" || data.type === "player_leave") {
-        const { playerId } = data;
-        console.log("[WS CLIENT] Remote player left room:", playerId);
-        onPlayerLeft(playerId);
-        return;
-      }
-
-      if (data.type === "playerJoined" || data.type === "player_join") {
-        const { playerId } = data;
-        console.log("[WS CLIENT] Remote player joined room:", playerId);
-        return;
-      }
-
-      if (data.type === "race_start" || data.type === "raceStart") {
-        const { startTime } = data;
-        console.log("[WS CLIENT] Race start countdown signal received:", startTime);
-        if (activeOnRaceStart) {
-          activeOnRaceStart(startTime);
+    current = socket = ws;
+    activeRoomCode = code;
+    activePlayerId = playerId;
+    activeOnRaceStart = onRaceStart || null;
+    lastSendTime = 0;
+    ws.onopen = () => {
+      if (disposed || current !== ws) return;
+      retries = 0;
+      ws.send(JSON.stringify({ type: "join", roomCode: code, playerId }));
+    };
+    ws.onmessage = (event) => {
+      if (disposed || current !== ws) return;
+      try {
+        const data = JSON.parse(event.data);
+        if (data.roomCode && data.roomCode.toUpperCase().trim() !== code) return;
+        if (data.type === "vehicleUpdate" || data.type === "vehicle_update") {
+          if (data.playerId !== playerId) onRemoteUpdate(data.playerId, data);
+        } else if (data.type === "player_list" || data.type === "playerList") {
+          onRemoteUpdate("", data);
+        } else if (data.type === "playerLeft" || data.type === "player_leave") {
+          onPlayerLeft(data.playerId);
+        } else if (data.type === "race_start" || data.type === "raceStart") {
+          if (Number.isFinite(data.startTime)) onRaceStart?.(data.startTime);
         }
-        return;
+      } catch (error) {
+        console.error(`[WS CLIENT] Invalid message in room ${code}:`, error);
       }
-    } catch (err) {
-      console.error("[WS CLIENT] Error parsing incoming message:", err);
-    }
+    };
+    ws.onerror = (error) => console.error(`[WS CLIENT] Relay error in room ${code}:`, error);
+    ws.onclose = (event) => {
+      if (socket === ws) socket = null;
+      console.info(`[WS CLIENT] Relay closed in ${code}: ${event.code} ${event.reason}`);
+      if (disposed || current !== ws || event.reason === "Replaced by new connection") return;
+      // Transport reconnection never removes Firestore membership.
+      retryTimer = setTimeout(open, Math.min(1000 * 2 ** retries++, 10000));
+    };
   };
-
-  ws.onerror = (err) => {
-    console.error("[WS CLIENT] WebSocket error:", err);
+  const cleanup = () => {
+    disposed = true;
+    clearTimeout(retryTimer);
+    if (socket === current) socket = null;
+    current?.close();
+    if (activeCleanup === cleanup) activeCleanup = null;
   };
-
-  ws.onclose = (event) => {
-    console.log("[WS CLIENT] WebSocket closed", "code:", event.code, "reason:", event.reason);
-    if (socket === ws) {
-      socket = null;
-    }
-  };
-
-  return () => {
-    if (socket === ws) {
-      ws.close();
-      socket = null;
-    }
-  };
+  activeCleanup = cleanup;
+  open();
+  return cleanup;
 }

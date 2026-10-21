@@ -1,10 +1,11 @@
-// @ts-nocheck
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
 
 import { CacheManager } from "./CacheManager";
+import { getAssetProxyUrl } from "./assetCdn";
+import { fetchGlbAsset, validateGlb } from "./glbAsset";
 
 export interface DownloadProgress {
   id: string;
@@ -16,98 +17,27 @@ export interface DownloadProgress {
 
 export class DownloadManager {
   public static async downloadWithProgress(
-    id: string,
-    name: string,
-    url: string,
-    onProgress: (progress: DownloadProgress) => void,
+    id: string, name: string, url: string, onProgress: (progress: DownloadProgress) => void,
   ): Promise<Blob> {
-    // Check cache first
-    const cachedResponse = await CacheManager.getCacheResponse(url);
-    if (cachedResponse) {
-      const blob = await cachedResponse.blob();
-      onProgress({
-        id,
-        name,
-        bytesLoaded: blob.size,
-        bytesTotal: blob.size,
-        percentage: 100,
-      });
-      return blob;
-    }
-
-    const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
-    let response;
-    try {
-      response = await fetch(proxyUrl);
-      const contentType = response.headers.get("content-type") || "";
-      if (!response.ok || contentType.includes("text/html")) {
-        throw new Error(`Proxy response not valid: status ${response.status}, type ${contentType}`);
-      }
-    } catch (proxyErr) {
-      console.warn(`[DownloadManager] Proxy download failed or returned HTML, falling back to direct CDN fetch:`, proxyErr);
-      response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`Failed to download asset: ${name}`);
+    const cached = await CacheManager.getCacheResponse(url);
+    if (cached) {
+      try {
+        const buffer = await cached.arrayBuffer();
+        validateGlb(buffer);
+        onProgress({ id, name, bytesLoaded: buffer.byteLength, bytesTotal: buffer.byteLength, percentage: 100 });
+        return new Blob([buffer], { type: "model/gltf-binary" });
+      } catch (error) {
+        console.warn(`[DownloadManager] Invalid cached ${id}:`, error);
+        await CacheManager.deleteCache(url);
       }
     }
-
-    // Keep Response cloned for Cache API
-    const cacheClone = response.clone();
-
-    const contentType = response.headers.get("content-type") || "";
-    if (contentType.includes("text/html") || response.status === 404) {
-      throw new Error(`Asset not found or returned HTML: ${name}`);
-    }
-
-    const reader = response.body?.getReader();
-    const contentLength = +(response.headers.get("content-length") || "0");
-
-    if (!reader) {
-      const blob = await response.blob();
-      onProgress({
-        id,
-        name,
-        bytesLoaded: blob.size,
-        bytesTotal: blob.size,
-        percentage: 100,
-      });
-      await CacheManager.putCache(url, cacheClone);
-      return blob;
-    }
-
-    let loaded = 0;
-    const chunks: Uint8Array[] = [];
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      if (value) {
-        chunks.push(value);
-        loaded += value.length;
-        const total = contentLength || loaded;
-
-        onProgress({
-          id,
-          name,
-          bytesLoaded: loaded,
-          bytesTotal: total,
-          percentage: total > 0 ? Math.floor((loaded / total) * 100) : 100,
-        });
-      }
-    }
-
-    const compiledBlob = new Blob(chunks);
-    await CacheManager.putCache(
-      url,
-      new Response(compiledBlob, {
-        headers: {
-          "content-type": cacheClone.headers.get("content-type") || "application/octet-stream",
-          "content-length": compiledBlob.size.toString(),
-        },
+    const asset = await fetchGlbAsset([url, getAssetProxyUrl(url, import.meta.env?.VITE_ASSET_PROXY_URL || undefined)], {
+      onProgress: (progress) => onProgress({
+        id, name, bytesLoaded: progress.bytesLoaded, bytesTotal: progress.bytesTotal || 0, percentage: progress.percentage,
       }),
-    );
-
-    return compiledBlob;
+    });
+    const blob = new Blob([asset.buffer], { type: "model/gltf-binary" });
+    await CacheManager.putCache(url, new Response(blob, { headers: { "content-type": blob.type, "content-length": String(blob.size) } }));
+    return blob;
   }
 }

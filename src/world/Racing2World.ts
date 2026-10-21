@@ -19,8 +19,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
 import { TrackGeometryHelper } from "../utils/track";
 import { terrainManager } from "./TerrainManager";
-import racing2Asset from "../assets/racing2.glb.asset.json";
-import { resolveAssetUrl } from "../services/assetCdn";
+import { loadRacingMap, invalidateRacingMap, RACING_MAP_URL } from "../services/racingMapAsset";
 
 // ─── Mesh classification keywords ─────────────────────────────────────────────
 const ROAD_KEYWORDS = ["road", "track", "asphalt", "tarmac", "street", "drive", "lane", "route", "circuit", "racing"];
@@ -130,11 +129,14 @@ export class Racing2World {
   private trackHelper: TrackGeometryHelper;
   private resolveReady!: (world: Racing2World) => void;
   private rejectReady!: (err: any) => void;
+  private disposed = false;
+  private displayOverlay = true;
 
-  static GLB_URL = "https://pub-a248afed72844944a7565dc9cbaacbb0.r2.dev/map/Untitled12.glb";
+  static GLB_URL = RACING_MAP_URL;
 
-  constructor(scene: THREE.Scene, trackHelper: TrackGeometryHelper) {
+  constructor(scene: THREE.Scene, trackHelper: TrackGeometryHelper, displayOverlay = true) {
     this.trackHelper = trackHelper;
+    this.displayOverlay = displayOverlay;
     this.readyPromise = new Promise((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
@@ -144,13 +146,6 @@ export class Racing2World {
     (window as any).racing2Ready = false;
     (window as any).racing2Error = null;
 
-    if (Racing2World.initialized && (window as any).racing2World?.ready) {
-      const existing = (window as any).racing2World;
-      Object.assign(this, existing);
-      this.readyPromise = Promise.resolve(existing);
-      this.resolveReady(existing);
-      return;
-    }
     Racing2World.initialized = true;
 
     this.root = new THREE.Group();
@@ -172,80 +167,41 @@ export class Racing2World {
       if (!Racing2World.loadingPromise) {
         Racing2World.loadingPromise = (async () => {
           const loader = new GLTFLoader();
+          const draco = new DRACOLoader();
+          draco.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.6/");
+          loader.setDRACOLoader(draco);
           try {
-            const draco = new DRACOLoader();
-            draco.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.6/");
-            loader.setDRACOLoader(draco);
-          } catch (e) {
-            console.warn("DRACO init failed", e);
+            const asset = await loadRacingMap((progress) => {
+              if (!this.disposed) this.showOverlay(`Loading map… ${progress.percentage}%`, false);
+            });
+            const resourcePath = new URL(".", new URL(RACING_MAP_URL, window.location.href)).href;
+            const gltf = await loader.parseAsync(asset.buffer, resourcePath);
+            if (!gltf.scene) throw new Error("Map GLB contained no scene");
+            Racing2World.cachedGltf = gltf;
+            return gltf;
+          } catch (error) {
+            console.error(`[Racing2World] GLB parsing/loading failed for ${RACING_MAP_URL}:`, error);
+            await invalidateRacingMap();
+            throw error;
+          } finally {
+            draco.dispose();
           }
-
-          // Build candidates to load from
-          const assetUrl = racing2Asset?.url ? resolveAssetUrl(racing2Asset.url) : "";
-          const urlsToTry: string[] = [
-            "/assets/racing2.glb"
-          ];
-
-          if (assetUrl) {
-            urlsToTry.push(`/api/proxy?url=${encodeURIComponent(assetUrl)}`);
-            urlsToTry.push(assetUrl);
-          }
-          urlsToTry.push(`/api/proxy?url=${encodeURIComponent(Racing2World.GLB_URL)}`);
-          urlsToTry.push(Racing2World.GLB_URL);
-
-          let gltf: any = null;
-          let lastError: any = null;
-
-          for (const url of urlsToTry) {
-            try {
-              console.log(`[Racing2World] Attempting to load map GLB from: ${url}`);
-              this.showOverlay(`Loading map from source…`, false);
-              gltf = await new Promise<any>((resolve, reject) => {
-                loader.load(
-                  url,
-                  (g) => resolve(g),
-                  (xhr) => {
-                    if (xhr?.total) {
-                      this.showOverlay(`Loading map… ${Math.round((xhr.loaded / xhr.total) * 100)}%`, false);
-                    } else if (xhr?.loaded) {
-                      const mb = (xhr.loaded / (1024 * 1024)).toFixed(1);
-                      this.showOverlay(`Loading map… ${mb} MB downloaded`, false);
-                    }
-                  },
-                  reject,
-                );
-              });
-              console.log(`[Racing2World] Successfully loaded map GLB from: ${url}`);
-              break;
-            } catch (err) {
-              console.warn(`[Racing2World] Failed to load GLB from ${url}:`, err);
-              lastError = err;
-            }
-          }
-
-          if (!gltf) {
-            throw lastError || new Error("Failed to load map GLB from all sources");
-          }
-
-          Racing2World.cachedGltf = gltf;
-          return gltf;
-        })();
+        })().finally(() => { Racing2World.loadingPromise = null; });
       }
       const gltf = await Racing2World.loadingPromise;
-      await this.onLoaded(gltf, false);
+      if (!this.disposed) await this.onLoaded(gltf, false);
     } catch (err) {
-      Racing2World.loadingPromise = null;
-      this.onError(err);
+      if (!this.disposed) this.onError(err);
     }
   }
 
   private async onLoaded(gltf: any, fromCache: boolean) {
+    if (this.disposed) return;
     try {
       this.showOverlay("Building road physics…", false);
-      const model: THREE.Object3D = fromCache
-        ? (gltf.scene || gltf.scenes?.[0]).clone(true)
-        : gltf.scene || gltf.scenes?.[0];
-      if (!model) throw new Error("GLB contained no scene");
+      const template = gltf.scene || gltf.scenes?.[0];
+      if (!template) throw new Error("GLB contained no scene");
+      const model: THREE.Object3D = template.clone(true);
 
       this.root.add(model);
       model.updateMatrixWorld(true);
@@ -293,7 +249,7 @@ export class Racing2World {
       });
 
       if (this.roadMeshes.length === 0) {
-        console.warn("Racing2World: no explicit road mesh found, physics will use GLB colliders only");
+        throw new Error("Racing2World: no driveable road meshes found in the map GLB");
       } else {
         this.roadMeshes.forEach((m) => {
           m.userData.isRoad = true;
@@ -352,7 +308,7 @@ export class Racing2World {
       }
       const finishVec = pickEmpty("finish", "Finish");
 
-      if (!startVec || !finishVec || cpVecs.length < REQUIRED_CP_COUNT) {
+      if (!startVec || !finishVec || cpVecs.length < REQUIRED_CP_COUNT || missing.length > 0) {
         throw new Error(
           `Racing2World: GLB missing required empties: ${missing.join(", ") || "(unknown)"}. ` +
             `Found ${cpVecs.length}/${REQUIRED_CP_COUNT} checkpoints, start=${!!startVec}, finish=${!!finishVec}.`,
@@ -430,11 +386,6 @@ export class Racing2World {
       console.log(`[✓] Checkpoint_55 exists: ${validationReport.checkpoint55Exists ? "PASS" : "FAIL"}`);
       console.log(`[✓] Finish exists: ${validationReport.finishExists ? "PASS" : "FAIL"}`);
       console.log(`[✓] Every checkpoint is connected: ${validationReport.allCheckpointsConnected ? "PASS" : "FAIL"} (Found ${discoveredCpNums.length}/${REQUIRED_CP_COUNT})`);
-      console.log(`[✓] AI can complete one full lap: PASS (Guided by robust sequential waypoint target system)`);
-      console.log(`[✓] AI can complete three laps: PASS (Synchronized with 3-lap sequential checkpoint rules)`);
-      console.log(`[✓] AI never gets permanently stuck: PASS (Under 3s automatic stuck recovery respawn engine active)`);
-      console.log(`[✓] AI stays on the road: PASS (Guided by dynamic lookahead racing line blend)`);
-      console.log(`[✓] AI finishes the race correctly: PASS`);
       
       (window as any).race2AIValidation = validationReport;
 
@@ -521,13 +472,12 @@ export class Racing2World {
       this.gridSpawns = [];
       for (let i = 1; i <= GRID_COUNT; i++) {
         const node = emptyIndex.get(`grid_${String(i).padStart(2, "0")}`);
-        if (!node) continue;
+        if (!node) throw new Error(`Racing2World: missing Grid_${String(i).padStart(2, "0")} marker`);
         const raw = worldPos(node);
         const road = terrainManager.resolveRoadSurfacePosition(raw, 220) ||
           terrainManager.findNearestRoadSurface(raw, 400);
         if (!road) {
-          console.warn(`Racing2World: Grid_${i} could not be snapped to road, skipping.`);
-          continue;
+          throw new Error(`Racing2World: Grid_${String(i).padStart(2, "0")} has no nearby road surface`);
         }
         const pos = new THREE.Vector3(road.x, road.y + SPAWN_CLEARANCE, road.z);
         let gridYaw = yawFromNode(node, pos);
@@ -543,11 +493,8 @@ export class Racing2World {
         spawnSource,
         aboveRoad: this.startPosition.y > spawnRoad.y + SPAWN_CLEARANCE - 0.01,
         withinBounds: (() => {
-          const b = new THREE.Box3().setFromPoints(
-            this.roadMeshes.length
-              ? this.roadMeshes.map((m) => new THREE.Vector3().setFromMatrixPosition(m.matrixWorld))
-              : [],
-          );
+          const b = new THREE.Box3();
+          this.roadMeshes.forEach((mesh) => b.expandByObject(mesh));
           if (b.isEmpty()) return true;
           return (
             this.startPosition.x >= b.min.x - 200 &&
@@ -607,7 +554,10 @@ export class Racing2World {
   }
 
   private onError(err: any) {
+    if (this.disposed) return;
     console.error("Racing2World: failed", err);
+    Racing2World.cachedGltf = null;
+    void invalidateRacingMap();
     this.failed = true;
     (window as any).racing2Ready = false;
     (window as any).racing2Error = (err as any)?.message || String(err ?? "Unknown error");
@@ -618,7 +568,7 @@ export class Racing2World {
   }
 
   private showOverlay(msg: string, isError: boolean) {
-    if (typeof document === "undefined") return;
+    if (this.disposed || !this.displayOverlay || typeof document === "undefined") return;
     
     if (!this.overlay) {
       this.overlay = document.createElement("div");
@@ -1072,7 +1022,24 @@ export class Racing2World {
 
   update(_dt: number) {}
 
+  /** Attach a pre-initialized multiplayer world without reparsing or losing its road BVH. */
+  attach(scene: THREE.Scene) {
+    if (!this.ready || this.disposed) throw new Error("Racing 2 world is not ready to mount");
+    scene.add(this.root);
+    if (!terrainManager.hasRoadFor(this.trackHelper)) {
+      terrainManager.prepareExternalRoad(this.trackHelper);
+      terrainManager.bakeRoadMeshBVH(this.roadMeshes, true);
+      terrainManager.bakeStaticColliderBounds(this.colliders, this.roadMeshes);
+    }
+    (window as any).racing2World = this;
+    (window as any).racing2Ready = true;
+    (window as any).mapLoaded = true;
+    (window as any).worldReady = true;
+  }
+
   dispose() {
+    this.disposed = true;
+    if (!this.ready && !this.failed) this.rejectReady(new DOMException("World initialization cancelled", "AbortError"));
     this.hideOverlay();
     Racing2World.initialized = false;
     this.root?.parent?.remove(this.root);

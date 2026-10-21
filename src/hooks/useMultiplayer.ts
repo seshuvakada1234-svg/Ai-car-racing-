@@ -9,6 +9,8 @@ export interface UseMultiplayerReturn {
   playerId: string | null;
   isConnecting: boolean;
   error: string | null;
+  roomMissing: boolean;
+  retryRoom: () => void;
 
   // Grid states
   grid: GridEntry[];
@@ -27,8 +29,8 @@ export interface UseMultiplayerReturn {
     map: string,
   ) => Promise<string>;
   joinRoom: (code: string, nickname: string, carId: string, carColor: string) => Promise<boolean>;
-  leaveRoom: () => void;
-  deleteRoom: () => void;
+  leaveRoom: () => Promise<void>;
+  deleteRoom: () => Promise<void>;
   toggleReady: (ready?: boolean) => void;
   startRaceNow: () => void;
   setError: (err: string | null) => void;
@@ -42,17 +44,19 @@ export interface UseMultiplayerReturn {
 let lastLocalSend = 0;
 let lastAiSend = 0;
 
-export function useMultiplayer(roomOverride?: RoomData | null): UseMultiplayerReturn {
+export function useMultiplayer(roomOverride?: RoomData | null, roomCode?: string): UseMultiplayerReturn {
   const {
     room: hookRoom,
     loading: isConnecting,
     error,
+    roomMissing,
+    retryRoom,
     createRoom: createRoomBase,
     joinRoom: joinRoomBase,
     leaveRoom,
     deleteRoom,
     setReady,
-  } = useRoom();
+  } = useRoom(roomCode);
 
   const room = roomOverride !== undefined ? roomOverride : hookRoom;
 
@@ -69,7 +73,7 @@ export function useMultiplayer(roomOverride?: RoomData | null): UseMultiplayerRe
   const allReady = room ? PlayerManager.allReady(room) : false;
   const hudSummary = room ? PlayerManager.getHudSummary(room) : "";
 
-  const playerId = useMemo(() => RoomManager.getCurrentPlayerId(), [room]);
+  const playerId = RoomManager.getCurrentPlayerId();
 
   const createRoom = useCallback(
     async (
@@ -160,6 +164,8 @@ export function useMultiplayer(roomOverride?: RoomData | null): UseMultiplayerRe
     playerId,
     isConnecting,
     error: error || localError,
+    roomMissing,
+    retryRoom,
     grid,
     humanCount,
     aiCount,

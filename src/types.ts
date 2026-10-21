@@ -50,6 +50,7 @@ export interface CarState {
   velocity: Vector3D;
   speed: number; // in km/h or relative units
   angle: number; // facing heading angle (in radians)
+  quaternion?: Vector3D & { w: number }; // Optional orientation from the vehicle relay
   angularVelocity: number;
   steerValue?: number; // Smoothed steering value for return force and analog dampening
   driftFactor: number;

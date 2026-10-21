@@ -57,18 +57,24 @@ export class AssetManager {
   }
 
   public static async getVerifiedBlob(id: string): Promise<Blob | null> {
-    const asset = this.assets.find((a) => a.id === id);
-    const blob = await StorageManager.getAsset(id);
-    if (!blob) return null;
-    const ok = await AssetVerifier.verifyBlob(blob, asset?.size);
-    return ok ? blob : null;
+    try {
+      const asset = this.assets.find((a) => a.id === id);
+      const blob = await StorageManager.getAsset(id);
+      if (!blob) return null;
+      const ok = await AssetVerifier.verifyBlob(blob, asset?.size);
+      return ok ? blob : null;
+    } catch (error) {
+      console.warn(`[AssetManager] Local storage unavailable for ${id}; streaming instead:`, error);
+      return null;
+    }
   }
 
   public static async downloadAsset(id: string, onProgress: (progress: DownloadProgress) => void): Promise<Blob> {
     const asset = this.assets.find((a) => a.id === id);
     if (!asset) throw new Error(`Asset ${id} not found configured`);
     const blob = await DownloadManager.downloadWithProgress(id, asset.name, asset.url, onProgress);
-    await StorageManager.saveAsset(id, blob);
+    try { await StorageManager.saveAsset(id, blob); }
+    catch (error) { console.warn(`[AssetManager] Could not persist ${id}:`, error); }
     return blob;
   }
 }

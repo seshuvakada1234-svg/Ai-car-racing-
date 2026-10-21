@@ -1,5 +1,6 @@
 import { Env } from "./types";
 import { RoomDurableObject } from "./RoomDurableObject";
+import { proxyAsset } from "../src/services/assetProxy";
 
 // Re-export the Durable Object class so Cloudflare can find and bind it
 export { RoomDurableObject };
@@ -7,6 +8,10 @@ export { RoomDurableObject };
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname === "/api/proxy") {
+      return proxyAsset(request, env.ASSET_ALLOWED_HOSTS || "");
+    }
 
     // Provide a simple health-check route matching the Node.js relay server
     if (url.pathname === "/health" || url.pathname === "/") {

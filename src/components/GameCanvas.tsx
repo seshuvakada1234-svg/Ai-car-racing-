@@ -51,6 +51,8 @@ interface GameCanvasProps {
   weather?: "sunny" | "cloudy" | "foggy" | "rain";
   cameraMode?: string;
   raceSettings?: any;
+  preparedWorld?: Racing2World | null;
+  onInitializationError?: (error: unknown) => void;
 }
 
 // Shared global instances to preserve WebGL context and loaded GPU memory across React mount/unmount lifecycles
@@ -71,6 +73,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   weather = "sunny",
   cameraMode = "third-person",
   raceSettings,
+  preparedWorld,
+  onInitializationError,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const flareRef = useRef<HTMLDivElement>(null);
@@ -105,6 +109,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   const isPausedRef = useRef<boolean>(isPaused);
   const onFinishRaceRef = useRef<() => void>(onFinishRace);
   const onTickRef = useRef<(updatedCars: CarState[]) => void>(onTick);
+  const onInitializationErrorRef = useRef(onInitializationError);
   const soundEnabledRef = useRef<boolean>(soundEnabled);
 
   const timeOfDayRef = useRef<"morning" | "noon" | "sunset" | "night">(timeOfDay);
@@ -118,6 +123,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   isPausedRef.current = isPaused;
   onFinishRaceRef.current = onFinishRace;
   onTickRef.current = onTick;
+  onInitializationErrorRef.current = onInitializationError;
   soundEnabledRef.current = soundEnabled;
   timeOfDayRef.current = timeOfDay;
   weatherRef.current = weather;
@@ -280,14 +286,17 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     const isMap2 = mt === "map2";
     const isRacing2 = mt === "racing2";
     const dragonWorld = isRacing2
-      ? new Racing2World(scene, trackHelper)
+      ? preparedWorld || new Racing2World(scene, trackHelper)
       : isMap2
         ? new CoastalSunsetTrackWorld(scene, trackHelper)
         : new DragonTrackWorld(scene, trackHelper);
 
-    if (isRacing2 && dragonWorld?.readyPromise) {
+    if (isRacing2 && preparedWorld) preparedWorld.attach(scene);
+
+    if (isRacing2 && !preparedWorld && dragonWorld?.readyPromise) {
       dragonWorld.readyPromise
         .then((world: any) => {
+          if (isUnmounted) return;
           const existingCars = carsRef.current || [];
           let roadLineup = existingCars.length > 0 ? existingCars.map((c) => ({ ...c, position: { ...c.position }, velocity: { ...c.velocity } })) : [];
 
@@ -366,6 +375,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           window.dispatchEvent(new Event("reset-camera"));
         })
         .catch((err: any) => {
+          if (isUnmounted) return;
           console.error("Racing 2 startup blocked:", err);
           (window as any).racing2Ready = false;
           (window as any).racing2Error =
@@ -497,7 +507,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       console.warn(`[Perf] Adaptive scaler → ${presetName}`);
     };
 
-    const tick = () => {
+    const tickFrame = () => {
       if (isUnmounted) return;
       animationId = requestAnimationFrame(tick);
       const cpuStart = performance.now();
@@ -847,6 +857,15 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     };
 
 
+    const tick = () => {
+      try {
+        tickFrame();
+      } catch (error) {
+        cancelAnimationFrame(animationId);
+        console.error("[GameCanvas] Physics/vehicle/render frame failed:", error);
+        onInitializationErrorRef.current?.(error);
+      }
+    };
     tick();
 
     // Observer resize handling
@@ -900,6 +919,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       vehicleEffects.destroy();
       vehicleRenderer.destroy();
       forestSystem.destroy();
+      if (preparedWorld) preparedWorld.root.removeFromParent();
+      else dragonWorld.dispose?.();
 
       // Geometry and materials from speed lines
       lGeo.dispose();
@@ -931,7 +952,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       (window as any).shadersCompiled = false;
       (window as any).worldReady = false;
     };
-  }, [physicsService, trackHelper, contextKey]);
+  }, [physicsService, trackHelper, preparedWorld, contextKey]);
 
   return (
     <div
@@ -983,6 +1004,8 @@ export const GameCanvas = React.memo(GameCanvasComponent, (prevProps, nextProps)
   return (
     prevProps.trackHelper === nextProps.trackHelper &&
     prevProps.physicsService === nextProps.physicsService &&
+    prevProps.preparedWorld === nextProps.preparedWorld &&
+    prevProps.onInitializationError === nextProps.onInitializationError &&
     prevProps.soundEnabled === nextProps.soundEnabled &&
     prevProps.timeOfDay === nextProps.timeOfDay &&
     prevProps.weather === nextProps.weather &&

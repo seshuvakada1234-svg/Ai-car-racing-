@@ -204,6 +204,10 @@ export class TerrainManager {
     this.clearRoadBVH();
   }
 
+  public hasRoadFor(trackHelper: TrackGeometryHelper): boolean {
+    return this.trackHelper === trackHelper && this.roadMeshesCache.length > 0;
+  }
+
   private clearRoadBVH(): void {
     if (this.roadBVHMesh) {
       this.roadBVHMesh.geometry.dispose();
@@ -425,11 +429,14 @@ export class TerrainManager {
           this.roadBVHMesh = new THREE.Mesh(mergedGeom, new THREE.MeshBasicMaterial());
         }
       } catch (err) {
+        console.warn("[TerrainManager] Combined road BVH failed; trying individual road meshes:", err);
         meshes.forEach((m) => {
           if (m instanceof THREE.Mesh && m.geometry) {
             try {
               (m.geometry as any).boundsTree = new MeshBVH(m.geometry);
-            } catch (bvhErr) {}
+            } catch (bvhErr) {
+              console.error(`[TerrainManager] Road BVH failed for ${m.name}:`, bvhErr);
+            }
           }
         });
       }

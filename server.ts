@@ -2,6 +2,10 @@ import express from "express";
 import path from "path";
 import http from "http";
 import fs from "fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { proxyAsset } from "./src/services/assetProxy";
+import { validateGlb } from "./src/services/glbAsset";
 import { createServer as createViteServer } from "vite";
 import { setupMultiplayerWebSocket } from "./src/multiplayer/multiplayerServer";
 import { WebSocketServer } from "ws";
@@ -10,7 +14,7 @@ import { createLanRoomRouter, LanRoomStore } from "./src/network/lanRoomServer";
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
 
   // Pre-download map GLB on startup for instantaneous, zero-CORS local loading
   const downloadMapOnStartup = async () => {
@@ -35,12 +39,13 @@ async function startServer() {
     }
 
     try {
-      const url = "https://pub-a248afed72844944a7565dc9cbaacbb0.r2.dev/map/Untitled12.glb";
+      const url = process.env.VITE_RACING_MAP_URL || "https://pub-a248afed72844944a7565dc9cbaacbb0.r2.dev/map/Untitled12.glb";
       const response = await fetch(url);
       if (!response.ok) {
-        throw new Error(`Failed to fetch map GLB: ${response.statusText}`);
+        throw new Error(`Failed to fetch map GLB: HTTP ${response.status} ${response.statusText}`);
       }
       const buffer = await response.arrayBuffer();
+      validateGlb(buffer);
       fs.writeFileSync(mapPath, Buffer.from(buffer));
       console.log(`[Startup Map Loader] Successfully downloaded and saved map GLB to local server at ${mapPath} (${buffer.byteLength} bytes).`);
     } catch (err: any) {
@@ -72,32 +77,21 @@ async function startServer() {
   });
 
   // Same-origin high-reliability CORS-bypass proxy for streaming binary GLB models
-  app.get("/api/proxy", async (req, res) => {
-    const targetUrl = req.query.url as string;
-    if (!targetUrl) {
-      return res.status(400).send("Missing url query parameter");
-    }
-
+  app.all("/api/proxy", async (req, res) => {
     try {
-      console.log(`[Proxy Server] Fetching: ${targetUrl}`);
-
-      // Node 18+ global fetch
-      const response = await fetch(targetUrl);
-      if (!response.ok) {
-        console.error(`[Proxy Server] Failed to download remote resource: ${response.status} ${response.statusText}`);
-        return res.status(response.status).send(`Failed to download remote resource: ${response.statusText}`);
-      }
-
-      const contentType = response.headers.get("content-type") || "application/octet-stream";
-      res.setHeader("Content-Type", contentType);
-      res.setHeader("Access-Control-Allow-Origin", "*");
-
-      const arrayBuffer = await response.arrayBuffer();
-      res.send(Buffer.from(arrayBuffer));
-      console.log(`[Proxy Server] Successfully proxied ${targetUrl} (${arrayBuffer.byteLength} bytes)`);
-    } catch (err: any) {
-      console.error(`[Proxy Server] Error processing proxy download for ${targetUrl}:`, err);
-      res.status(500).send(`Proxy failed: ${err.message}`);
+      const headers = new Headers();
+      if (req.headers.range) headers.set("Range", req.headers.range);
+      const request = new Request(`http://localhost${req.originalUrl}`, { method: req.method, headers });
+      const response = await proxyAsset(request, process.env.ASSET_ALLOWED_HOSTS || "");
+      res.status(response.status);
+      response.headers.forEach((value, key) => res.setHeader(key, value));
+      if (!response.body) return res.end();
+      // Send bytes as they arrive rather than buffering the entire 45 MB map.
+      await pipeline(Readable.fromWeb(response.body as any), res);
+    } catch (error) {
+      console.error("[Asset Proxy] Response stream failed:", error);
+      if (!res.headersSent) res.status(502).send("Asset proxy stream failed");
+      else res.destroy();
     }
   });
 
@@ -150,7 +144,7 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+    app.get("/{*path}", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

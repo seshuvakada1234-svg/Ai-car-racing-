@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { NormalRoomService } from "../multiplayer/NormalRoomService";
@@ -8,7 +8,11 @@ export const CreateRoomPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { profile } = useAuth();
+  const uid = profile?.uid;
+  const name = profile?.name;
+  const photoURL = profile?.photoURL;
   const [error, setError] = useState<string | null>(null);
+  const creationRef = useRef<Promise<string> | null>(null);
 
   // Retrieve parameters passed from Garage Menu if any
   const state = location.state as { selectedCar?: string; selectedMap?: string } | null;
@@ -19,15 +23,17 @@ export const CreateRoomPage: React.FC = () => {
     let active = true;
 
     const performRoomCreation = async () => {
-      if (!profile) return;
+      if (!uid) return;
       try {
-        const generatedCode = await NormalRoomService.createRoom(
-          profile.uid,
-          profile.name || "Anonymous Racer",
-          profile.photoURL || "",
+        // React StrictMode replays effects; both runs must await the same room.
+        creationRef.current ??= NormalRoomService.createRoom(
+          uid,
+          name || "Anonymous Racer",
+          photoURL || "",
           car,
           map,
         );
+        const generatedCode = await creationRef.current;
         if (active) {
           // Navigate to Waiting Lobby
           navigate(`/room/${generatedCode}`);
@@ -45,7 +51,7 @@ export const CreateRoomPage: React.FC = () => {
     return () => {
       active = false;
     };
-  }, [profile, car, map, navigate]);
+  }, [uid, name, photoURL, car, map, navigate]);
 
   return (
     <div id="create-room-view" className="min-h-[80vh] flex flex-col items-center justify-center text-white px-4">

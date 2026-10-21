@@ -1,6 +1,6 @@
 # Cloudflare Workers + Durable Objects Multiplayer Vehicle Relay
 
-This directory contains the production-ready source code for a ultra-low-latency vehicle coordinate synchronization relay designed to run on **Cloudflare Workers** with **Durable Objects**.
+This directory contains the vehicle synchronization relay for **Cloudflare Workers** with **Durable Objects**, plus a streaming public-asset proxy at `/api/proxy`.
 
 This is a **high-frequency (20Hz / 50ms interval) memory-only data stream** that routes position vectors, orientation quaternions, nitro state, drift indicators, and speed measurements between racing competitors.
 
@@ -23,7 +23,7 @@ This is a **high-frequency (20Hz / 50ms interval) memory-only data stream** that
 ```
 
 1. **Control Plane (Firestore):** Manages user accounts, room creation, lobbies, player ready states, matching, countdown synchronization, and overall race state.
-2. **Data Plane (Cloudflare Workers + Durable Objects):** Manages real-time vehicle movement replication. It uses memory-only Durable Objects where each instance handles exactly one race room code, avoiding storage fees and keeping communication latency under 10ms.
+2. **Data Plane (Cloudflare Workers + Durable Objects):** Manages real-time vehicle movement replication. Each memory-only room instance handles one normalized room code. Firestore membership persists independently of temporary socket disconnects.
 
 ---
 
@@ -63,7 +63,7 @@ The Durable Object class is bound to the `VEHICLE_ROOM` namespace inside `wrangl
 ## Deployment Instructions
 
 ### Prerequisites
-1. Install [Node.js](https://nodejs.org/) (v18 or newer).
+1. Install [Node.js](https://nodejs.org/) (22.12 or newer for the full repository).
 2. Install Cloudflare Wrangler CLI:
    ```bash
    npm install -g wrangler
@@ -74,7 +74,7 @@ The Durable Object class is bound to the `VEHICLE_ROOM` namespace inside `wrangl
    ```
 
 ### Step 1: Clone & Navigate
-If you copied this directory separately, navigate to this directory:
+Deploy from this directory in the full repository; the proxy imports shared source from `../src/services/`:
 ```bash
 cd cloudflare-worker
 ```
@@ -99,7 +99,7 @@ npm run deploy
 ```
 
 Once deployment completes, Wrangler outputs your live Worker domain, e.g.:
-`https://racing-game-vehicle-relay.your-subdomain.workers.dev`
+`https://ai-car-racing-ws.<your-workers-subdomain>.workers.dev`
 
 ---
 
@@ -109,7 +109,11 @@ Update your frontend client deployment configuration. Add your Cloudflare Worker
 
 ```env
 # Expose the secure WebSocket endpoint to Vite
-VITE_VEHICLE_WS_URL=wss://racing-game-vehicle-relay.your-subdomain.workers.dev
+VITE_VEHICLE_WS_URL=wss://ai-car-racing-ws.<your-workers-subdomain>.workers.dev/ws
 ```
 
-When building, Vite embeds this variable into your frontend bundles, ensuring all racing players automatically route their high-frequency coordinates to the Durable Object closest to them.
+Replace the placeholder with the actual deployed host, then rebuild the frontend. All players with the same normalized code are routed to the same Durable Object.
+
+To use this worker for asset fallback as well, set `VITE_ASSET_PROXY_URL=https://<actual-worker-host>/api/proxy` on the frontend. The worker already allows the repository's public R2 and Lovable asset hosts. For a custom asset domain, set the server-side worker variable `ASSET_ALLOWED_HOSTS` to its hostname (comma-separated for multiple domains). No R2 secrets or bucket bindings are required for public URLs.
+
+See the root [README](../README.md#vercel-configuration) for Vercel settings, Firebase requirements, R2 CORS, and the multi-device verification procedure.

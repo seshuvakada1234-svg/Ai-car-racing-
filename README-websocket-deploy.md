@@ -4,7 +4,7 @@ This racing game uses a dual-networking architecture for high-performance multip
 1. **Firestore (Control Plane):** Manages user accounts, room creation, ready states, match countdowns, and lap achievements.
 2. **WebSocket Relay (Data Plane):** A dedicated, lightweight real-time data stream running at **20Hz** that broadcasts high-frequency vehicle coordinate vectors (positions, orientations, speed, and nitro triggers) to all competitors with sub-millisecond overhead.
 
-Because serverless hosting environments (like Vercel, Firebase Hosting, or standard Cloud Run scale-to-zero tiers) enforce severe request duration timeouts or lack persistent connection states, **the WebSocket server must be hosted on an always-on virtual machine or persistent container instance**.
+Vercel hosts the frontend and streaming asset proxy. Host the WebSocket relay using the included [Cloudflare Worker + Durable Object](cloudflare-worker/README.md), or use the persistent Node.js server described below. See the root [README](README.md#vercel-configuration) for the current room, map-loading, and deployment requirements.
 
 ---
 

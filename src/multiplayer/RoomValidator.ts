@@ -13,7 +13,7 @@ export class RoomValidator {
    * - "Room expired"
    * - "Room full"
    */
-  public static validateRoomToJoin(room: RoomState | null): void {
+  public static validateRoomToJoin(room: RoomState | null, playerId?: string): void {
     if (!room) {
       throw new Error("Room Closed");
     }
@@ -33,16 +33,23 @@ export class RoomValidator {
       throw new Error("Room Closed");
     }
 
-    // Verify waiting or racing
-    if (room.status !== "waiting" && room.status !== "racing") {
-      throw new Error("Room Closed");
+    const isMember = !!playerId && (room.players || []).some((p) => (p.uid || p.id) === playerId);
+    const activeRace = ["starting", "countdown", "racing"].includes(room.status);
+    if (room.status !== "waiting" && !(isMember && activeRace)) {
+      throw new Error("Race already started");
     }
+
+    // Reloading a full room or an active race must not evict an existing member.
+    if (isMember && activeRace) return;
 
     // Checking 30 minutes room expiration (last active check)
     let isExpired = false;
     const now = Date.now();
 
-    if (room.expiresAt) {
+    if (room.updatedAt || room.createdAt) {
+      const lastActivity = this.timestampMillis(room.updatedAt || room.createdAt);
+      isExpired = lastActivity !== null && now - lastActivity > 30 * 60 * 1000;
+    } else if (room.expiresAt) {
       let expiresTime = 0;
       if (typeof room.expiresAt.toMillis === "function") {
         expiresTime = room.expiresAt.toMillis();
@@ -86,9 +93,21 @@ export class RoomValidator {
     // Check capacity
     const playersList = room.players || [];
     const maxCount = room.maxPlayers || 6;
-    if (playersList.length >= maxCount) {
+    if (!isMember && playersList.length >= maxCount) {
       throw new Error("Room Full");
     }
+  }
+
+  public static timestampMillis(value: any): number | null {
+    const millis = typeof value?.toMillis === "function" ? value.toMillis()
+      : typeof value?.seconds === "number" ? value.seconds * 1000
+      : value instanceof Date ? value.getTime()
+      : typeof value === "number" ? value : NaN;
+    return Number.isFinite(millis) ? millis : null;
+  }
+
+  public static normalizeCode(code: string | null | undefined): string {
+    return (code || "").trim().toUpperCase();
   }
 
   /**
@@ -96,7 +115,7 @@ export class RoomValidator {
    */
   public static isValidCode(code: string | null | undefined): boolean {
     if (!code) return false;
-    const clean = code.trim().toUpperCase();
+    const clean = this.normalizeCode(code);
     return clean.length >= 4 && clean.length <= 12 && /^[A-Z0-9]+$/.test(clean);
   }
 }

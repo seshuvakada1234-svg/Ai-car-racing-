@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type RoomStatus = "waiting" | "countdown" | "racing" | "finished" | "archived" | "closed" | "complete";
+export type RoomStatus = "waiting" | "starting" | "countdown" | "racing" | "finished" | "archived" | "closed" | "complete";
 
 export interface RoomPlayer {
   uid: string;
@@ -26,6 +26,12 @@ export interface RoomPlayer {
 
   // Map download synchronizations
   mapReady?: boolean;
+  mapProgress?: number;
+  carReady?: boolean;
+  carProgress?: number;
+  glbParsing?: boolean;
+  vehicleInitialized?: boolean;
+  connected?: boolean;
   sceneReady?: boolean;
   downloadProgress?: number;
   downloadedMB?: number;
@@ -38,6 +44,7 @@ export interface RoomPlayer {
   speed?: number;
   isDrifting?: boolean;
   currentLap?: number;
+  currentCheckpointIndex?: number;
   isFinished?: boolean;
   totalDistanceTraveled?: number;
 }
@@ -69,4 +76,7 @@ export interface RoomState {
   currentPlayers: number;
   isArchived?: boolean;
   countdownStartTime?: any;
+  raceStarted?: boolean;
+  isLiveMode?: boolean;
+  selectedMap?: { id: string; [key: string]: any };
 }

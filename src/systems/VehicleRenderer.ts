@@ -52,6 +52,7 @@ export class VehicleRenderer {
   };
 
   constructor(scene: THREE.Scene, reflectionTex: THREE.Texture | null) {
+    CarLoader.resetFailures();
     this.scene = scene;
     this.reflectionTex = reflectionTex;
     VehicleRenderer.initialized = true;

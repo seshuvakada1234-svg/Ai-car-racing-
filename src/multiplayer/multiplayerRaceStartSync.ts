@@ -6,8 +6,8 @@
  * at exactly the same moment.
  */
 
-import { db } from "../lib/firebase";
-import { doc, updateDoc, onSnapshot, serverTimestamp, getDoc } from "firebase/firestore";
+import { db, auth } from "../lib/firebase";
+import { doc, updateDoc, onSnapshot, serverTimestamp, getDoc, runTransaction } from "firebase/firestore";
 import { NormalRoomService } from "./NormalRoomService";
 
 // We track the offset between local system time and Firestore server time
@@ -84,7 +84,7 @@ export async function measureServerTimeOffset(roomCode: string, uid: string): Pr
 
 /**
  * 1. Listen to Firestore room updates.
- * Computes and monitors clock sync offsets automatically.
+ * Clock calibration is performed by measureServerTimeOffset, not by document age.
  */
 export function initializeRaceStartSync(roomCode: string, onUpdate?: (room: any) => void) {
   const cleanCode = roomCode.toUpperCase().trim();
@@ -93,14 +93,6 @@ export function initializeRaceStartSync(roomCode: string, onUpdate?: (room: any)
   return onSnapshot(roomRef, (snapshot) => {
     if (snapshot.exists()) {
       const data = snapshot.data();
-      
-      // Calculate/estimate clock offset using updatedAt from server
-      if (data.updatedAt && snapshot.metadata.hasPendingWrites === false) {
-        const serverMillis = data.updatedAt.toMillis ? data.updatedAt.toMillis() : new Date(data.updatedAt).getTime();
-        const localMillis = Date.now();
-        const offset = serverMillis - localMillis;
-        setEstimatedServerTimeOffset(offset);
-      }
       
       if (onUpdate) {
         onUpdate(data);
@@ -134,11 +126,18 @@ export async function startCountdown(roomCode: string) {
   const cleanCode = roomCode.toUpperCase().trim();
   const roomRef = doc(db, "rooms", cleanCode);
   console.log(`[Race Sync] Host starting countdown in room ${cleanCode}`);
-  await updateDoc(roomRef, {
-    status: "countdown",
-    phase: "countdown",
-    countdownStartTime: serverTimestamp(),
-    updatedAt: serverTimestamp()
+  await runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(roomRef);
+    if (!snapshot.exists()) throw new Error("Room Closed");
+    const room = snapshot.data();
+    if (room.hostId !== auth.currentUser?.uid) throw new Error("Only the room host can start the countdown");
+    if (room.status !== "racing" || room.raceStarted) return;
+    const humans = (room.players || []).filter((player: any) => !player.isAI);
+    if (!humans.length || !humans.every((player: any) => player.mapReady && player.carReady && player.sceneReady && player.ready)) return;
+    transaction.update(roomRef, {
+      status: "countdown", phase: "countdown",
+      countdownStartTime: serverTimestamp(), updatedAt: serverTimestamp(),
+    });
   });
 }
 
@@ -171,10 +170,14 @@ export async function beginRace(roomCode: string) {
   const cleanCode = roomCode.toUpperCase().trim();
   console.log(`[Race Sync] Host transitions room to racing in ${cleanCode}`);
   const roomRef = doc(db, "rooms", cleanCode);
-  await updateDoc(roomRef, {
-    status: "racing",
-    phase: "racing",
-    raceStarted: true,
-    updatedAt: serverTimestamp()
+  await runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(roomRef);
+    if (!snapshot.exists()) throw new Error("Room Closed");
+    const room = snapshot.data();
+    if (room.hostId !== auth.currentUser?.uid) throw new Error("Only the room host can begin the race");
+    if (room.status !== "countdown") return;
+    transaction.update(roomRef, {
+      status: "racing", phase: "racing", raceStarted: true, updatedAt: serverTimestamp(),
+    });
   });
 }

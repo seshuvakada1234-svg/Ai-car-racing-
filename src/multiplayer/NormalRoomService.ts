@@ -17,6 +17,8 @@ import {
 } from "firebase/firestore";
 import { RoomService } from "./RoomService";
 import { RoomPlayer, RoomState } from "./RoomState";
+import { RoomManager } from "./RoomManager";
+import { RoomValidator } from "./RoomValidator";
 
 export interface NormalPlayer {
   uid: string;
@@ -32,6 +34,7 @@ export interface NormalPlayer {
   // Map download fields
   mapDownloaded?: boolean;
   mapReady?: boolean;
+  mapProgress?: number;
   downloadProgress?: number;
   downloadedMB?: number;
   totalMB?: number;
@@ -57,6 +60,7 @@ export interface NormalPlayer {
   drift?: boolean;
   isDrifting?: boolean;
   currentLap?: number;
+  currentCheckpointIndex?: number;
   isFinished?: boolean;
   totalDistanceTraveled?: number;
 }
@@ -67,7 +71,7 @@ export interface NormalRoom {
   ownerName: string;
   selectedCar: string;
   mapId: string;
-  status: "waiting" | "countdown" | "racing" | "finished" | "archived" | "closed" | "complete";
+  status: RoomState["status"];
   maxPlayers: number;
   currentPlayers: number;
   players: string[];
@@ -117,7 +121,9 @@ export class NormalRoomService {
     mapId: string,
     maxPlayers = 3,
   ): Promise<string> {
-    return RoomService.createRoom(ownerUid, ownerName, ownerPhotoURL, selectedCar, mapId, maxPlayers);
+    const code = await RoomService.createRoom(ownerUid, ownerName, ownerPhotoURL, selectedCar, mapId, maxPlayers);
+    RoomManager.rememberSession(code, ownerName, selectedCar);
+    return code;
   }
 
   /**
@@ -126,13 +132,16 @@ export class NormalRoomService {
   static async joinRoom(code: string, uid: string, playerName: string, photoURL: string): Promise<void> {
     // Read the room selection default car first
     const cleanCode = code.toUpperCase().trim();
+    if (!RoomValidator.isValidCode(cleanCode)) throw new Error("Invalid room code");
     const roomRef = doc(db, "rooms", cleanCode);
     const snap = await getDoc(roomRef);
     let car = "porsche_911_gt3";
     if (snap.exists()) {
-      car = (snap.data() as RoomState).selectedCar || car;
+      const selected = snap.data().selectedCar;
+      car = typeof selected === "string" ? selected : selected?.id || car;
     }
     await RoomService.joinRoom(cleanCode, uid, playerName, photoURL || "", car);
+    RoomManager.rememberSession(cleanCode, playerName, car);
   }
 
   /**
@@ -158,6 +167,7 @@ export class NormalRoomService {
    */
   static async leaveOrCancelRoom(code: string, uid: string): Promise<void> {
     await RoomService.leaveRoom(code, uid);
+    if (uid === auth.currentUser?.uid) RoomManager.clearSession(code);
   }
 
   /**
@@ -165,12 +175,13 @@ export class NormalRoomService {
    */
   static async deleteRoom(code: string): Promise<void> {
     await RoomService.deleteRoom(code);
+    RoomManager.clearSession(code);
   }
 
   /**
    * Listen to any changes in the main room doc.
    */
-  static listenToRoom(code: string, callback: (room: NormalRoom | null) => void) {
+  static listenToRoom(code: string, callback: (room: NormalRoom | null) => void, onError?: (error: Error) => void) {
     return RoomService.listenToRoom(code, (state) => {
       if (!state) {
         callback(null);
@@ -185,7 +196,7 @@ export class NormalRoomService {
         status: state.status,
         maxPlayers: state.maxPlayers,
         currentPlayers: state.currentPlayers,
-        players: state.players.map((p) => p.uid),
+        players: state.players.map((p) => p.uid || p.id!),
         createdAt: state.createdAt,
         roomName: (state as any).roomName || `${state.ownerName || "Host"}'s Arena`,
         hostId: state.hostId,
@@ -195,10 +206,10 @@ export class NormalRoomService {
         hostMap: (state as any).hostMap || (typeof state.selectedMap === "object" && state.selectedMap ? (state.selectedMap as any).id : (state.mapType || "map1")),
         laps: (state as any).laps || (typeof state.selectedMap === "object" && state.selectedMap ? (state.selectedMap as any).laps : 3),
         weather: (state as any).weather || (typeof state.selectedMap === "object" && state.selectedMap ? (state.selectedMap as any).weather : "Clear"),
-        selectedCarObj: (state as any).selectedCar && typeof (state as any).selectedCar === "object" ? (state as any).selectedCar : null,
+        selectedCarObj: (state as any).selectedCarObj || null,
         selectedMapObj: (state as any).selectedMap && typeof (state as any).selectedMap === "object" ? (state as any).selectedMap : null,
       });
-    });
+    }, onError);
   }
 
   /**
@@ -237,6 +248,7 @@ export class NormalRoomService {
       vehicleInitialized?: boolean;
       ready?: boolean;
       sceneReady?: boolean;
+      connected?: boolean;
     }
   ): Promise<void> {
     await RoomService.updatePlayerLoadingStatus(code, uid, status);
@@ -245,7 +257,7 @@ export class NormalRoomService {
   /**
    * Listen to changes in the players subcollection.
    */
-  static listenToPlayers(code: string, callback: (players: NormalPlayer[]) => void) {
+  static listenToPlayers(code: string, callback: (players: NormalPlayer[]) => void, onError?: (error: Error) => void) {
     const cleanCode = code.toUpperCase().trim();
     const playersRef = collection(db, "rooms", cleanCode, "players");
     return onSnapshot(playersRef, (snap) => {
@@ -276,12 +288,17 @@ export class NormalRoomService {
           playerName: d.playerName || d.nickname || "Driver",
           photoURL: d.photoURL || "",
           joinedAt: d.joinedAt || Date.now(),
-          ready: d.ready ?? d.isReady ?? true,
+          ready: d.ready ?? d.isReady ?? false,
           selectedCar: d.selectedCar || d.carId || "porsche_911_gt3",
           carId: d.carId || "porsche_911_gt3",
           carColor: d.carColor,
           mapDownloaded: d.mapDownloaded ?? d.mapReady ?? false,
           mapReady: d.mapReady,
+          mapProgress: d.mapProgress,
+          carReady: d.carReady,
+          carProgress: d.carProgress,
+          glbParsing: d.glbParsing,
+          vehicleInitialized: d.vehicleInitialized,
           sceneReady: d.sceneReady ?? false,
           downloadProgress: d.downloadProgress,
           downloadedMB: d.downloadedMB,
@@ -299,12 +316,16 @@ export class NormalRoomService {
           drift: d.drift,
           isDrifting: d.isDrifting,
           currentLap: d.currentLap,
+          currentCheckpointIndex: d.currentCheckpointIndex ?? d.checkpoint,
           isFinished: d.isFinished,
           totalDistanceTraveled: d.totalDistanceTraveled,
         });
       });
       list.sort((a, b) => a.joinedAt - b.joinedAt);
       callback(list);
+    }, (error) => {
+      console.error(`[NormalRoomService] Players subscription failed for ${cleanCode}:`, error);
+      onError?.(error);
     });
   }
 

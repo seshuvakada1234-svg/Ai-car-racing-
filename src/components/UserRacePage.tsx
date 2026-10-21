@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useMultiplayer } from "../hooks/useMultiplayer";
@@ -16,28 +16,23 @@ import { HUD } from "./HUD";
 import { RoomCodeHUD } from "./RoomCodeHUD";
 import { GameOver } from "./GameOver";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { terrainManager } from "../world/TerrainManager";
-import { setPlayerSelectedModelKey, loadSpecificCarModel, gltfModelCache, GLTFMaterialsPBRSpecularGlossinessExtension } from "../world/procedural";
-import { AssetManager } from "../services/AssetManager";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
-import { applyGltfMaterialFix } from "../utils/gltfMaterialFix";
+import { setPlayerSelectedModelKey } from "../world/procedural";
 import { SyncManager } from "../multiplayer/SyncManager";
-import { db } from "../lib/firebase";
-import { doc, onSnapshot } from "firebase/firestore";
 import { Loader2, Compass, CheckCircle2, AlertTriangle, LogOut } from "lucide-react";
 import * as THREE from "three";
 import { GameSettings, CarState, ControlsState, GamePhase } from "../types";
 import { MultiplayerRaceLoadingScreen } from "./MultiplayerRaceLoadingScreen";
 import { NormalRoomService } from "../multiplayer/NormalRoomService";
+import { loadRacingMap } from "../services/racingMapAsset";
+import { verifyCar, getNormalizedCarKey } from "../services/assetLoadingManager";
+import { Racing2World } from "../world/Racing2World";
+import { buildMultiplayerLineup } from "../multiplayer/raceInitialization";
 import { connectVehicleSocket, sendVehicleUpdate, triggerWsStartRace } from "../network/vehicleSocket";
 import {
-  initializeRaceStartSync,
-  updatePlayerReady,
   startCountdown,
-  waitForCountdown,
   beginRace,
   getSynchronizedServerTime,
+  measureServerTimeOffset,
 } from "../multiplayer/multiplayerRaceStartSync";
 
 const getCarIdString = (carValue: any): string => {
@@ -80,25 +75,21 @@ const getMillisFromServerTime = (value: any): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-export const RaceScene: React.FC = () => {
+export const RaceScene: React.FC<{ onRetry: () => void }> = ({ onRetry }) => {
   const { roomCode } = useParams<{ roomCode: string }>();
   const navigate = useNavigate();
   const normalizedCode = (roomCode || "").trim().toUpperCase();
 
-  // Ensure RoomManager and storage are synchronized on page load/mount
-  useEffect(() => {
-    if (normalizedCode) {
-      RoomManager.currentRoomCode = normalizedCode;
-      try {
-        localStorage.setItem("activeRoomCode", normalizedCode);
-        sessionStorage.setItem("last_room_code", normalizedCode);
-      } catch (e) {
-        console.warn("Storage write failed", e);
-      }
-    }
-  }, [normalizedCode]);
-
-  const mp = useMultiplayer();
+  const mp = useMultiplayer(undefined, normalizedCode);
+  const roomRef = useRef(mp.room);
+  roomRef.current = mp.room;
+  const activePlayerId = mp.playerId || "";
+  const isMember = !!mp.room?.players.some((p) => (p.uid || p.id) === activePlayerId);
+  const activeMapId = mp.room?.map || "map1";
+  const [loadingStatusReset, setLoadingStatusReset] = useState(false);
+  const [preparedWorld, setPreparedWorld] = useState<Racing2World | null>(null);
+  const latestPlayerStates = useRef(new Map<string, any>());
+  const resetLoadingRef = useRef<Promise<void> | null>(null);
 
   // Logging and timeout state for initialization
   const [initLogs, setInitLogs] = useState({
@@ -116,13 +107,35 @@ export const RaceScene: React.FC = () => {
   const [initTimeoutTriggered, setInitTimeoutTriggered] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const logStep = (step: keyof typeof initLogs, status: "success" | "failed" | "pending") => {
+  const logStep = useCallback((step: keyof typeof initLogs, status: "success" | "failed" | "pending") => {
     console.log(`[Race Init Log] ${step.toUpperCase()}: ${status}`);
     setInitLogs((prev) => ({
       ...prev,
       [step]: status,
     }));
-  };
+  }, []);
+
+  const reportInitError = useCallback((step: keyof typeof initLogs, error: unknown) => {
+    // Preserve the original exception/stack and identify the exact failing stage.
+    console.error(`[Race Init] ${step} failed`, { roomCode: normalizedCode, playerId: activePlayerId, map: roomRef.current?.map }, error);
+    logStep(step, "failed");
+    setErrorMessage(error instanceof Error ? error.message : String(error));
+    setInitTimeoutTriggered(true);
+    if (roomRef.current?.players.some((player) => (player.uid || player.id) === activePlayerId)) {
+      void NormalRoomService.updatePlayerLoadingStatus(normalizedCode, activePlayerId, {
+        ready: false, sceneReady: false, vehicleInitialized: false,
+      }).catch((statusError) => console.error("[Race Init] Could not publish failed readiness:", statusError));
+    }
+  }, [normalizedCode, activePlayerId, logStep]);
+
+  useEffect(() => {
+    const onVehicleError = (event: Event) => {
+      const detail = (event as CustomEvent<{ message: string }>).detail;
+      reportInitError("playerCarSpawned", new Error(detail?.message || "Vehicle model initialization failed"));
+    };
+    window.addEventListener("race:vehicleLoadError", onVehicleError);
+    return () => window.removeEventListener("race:vehicleLoadError", onVehicleError);
+  }, [reportInitError]);
 
   // Map downloading and cache states
   const [mapReadyLocal, setMapReadyLocal] = useState(false);
@@ -149,7 +162,8 @@ export const RaceScene: React.FC = () => {
   const [vehicleInitProgress, setVehicleInitProgress] = useState(0);
   const [vehicleInitReady, setVehicleInitReady] = useState(false);
 
-  const [allPlayersReadyTriggered, setAllPlayersReadyTriggered] = useState(false);
+  const allPlayersReadyTriggered = !!mp.room?.players.length && mp.room.players.filter((p) => !p.isAI)
+    .every((p) => p.mapReady && p.carReady && p.sceneReady && p.ready);
   const [countdownStarted, setCountdownStarted] = useState(false);
 
   const [showExitDialog, setShowExitDialog] = useState(false);
@@ -165,25 +179,12 @@ export const RaceScene: React.FC = () => {
       
       console.log(`[Exit Race] Player ${playerId} is leaving room ${code}`);
       
-      // 1. Unsubscribe from the room listener
-      mp.leaveRoom();
-      
-      // 2. Call RoomService.leaveRoom directly to ensure Firestore transaction completes
-      if (code && playerId) {
-        const { RoomService } = await import("../multiplayer/RoomService");
-        await RoomService.leaveRoom(code, playerId);
-      }
+      await mp.leaveRoom();
+      navigate("/rooms");
     } catch (err) {
       console.error("[Exit Race] Failed to exit cleanly:", err);
-    } finally {
-      // 3. Clear local storage records
-      try {
-        localStorage.removeItem("activeRoomCode");
-        sessionStorage.removeItem("last_room_code");
-      } catch (e) {}
-      
-      // 4. Navigate back to rooms / lobby dashboard
-      navigate("/rooms");
+      toast.error(err instanceof Error ? err.message : "Could not leave the room. Please retry.");
+      setIsExiting(false);
     }
   };
 
@@ -206,16 +207,27 @@ export const RaceScene: React.FC = () => {
 
   // Automatically return to Garage if the room is canceled/deleted during the active race
   useEffect(() => {
-    if (!mp.isConnecting && !mp.room) {
+    if (mp.roomMissing && !mp.error) {
       if (isExiting) {
         // Voluntarily leaving, do not show opponents remaining toast
       } else {
         console.log("Room deleted or canceled during active race. Returning to garage.");
         sessionStorage.setItem("room_closed_no_opponents", "true");
+        RoomManager.clearSession(normalizedCode);
         navigate("/garage");
       }
     }
-  }, [mp.room, mp.isConnecting, isExiting, navigate]);
+  }, [mp.roomMissing, mp.error, isExiting, navigate, normalizedCode]);
+
+  useEffect(() => {
+    if (isExiting) return;
+    if (mp.error) reportInitError("firestoreRoomLoaded", new Error(mp.error));
+    else if (mp.room && activePlayerId && !isMember) {
+      reportInitError("connectedToRoom", new Error("The signed-in player is not a member of this room. Join through the lobby first."));
+    } else if (isMember && mp.room?.status === "waiting") {
+      navigate(`/room/${normalizedCode}`, { replace: true });
+    }
+  }, [mp.error, mp.room?.roomCode, mp.room?.status, isMember, activePlayerId, isExiting, normalizedCode, navigate, reportInitError]);
 
   // Core Game State
   const [trackHelper, setTrackHelper] = useState<TrackGeometryHelper | null>(null);
@@ -253,6 +265,8 @@ export const RaceScene: React.FC = () => {
   // Clean initialization values on mount or room change
   useEffect(() => {
     (window as any).playerCarAddedToScene = false;
+    (window as any).carLoaded = false;
+    (window as any).remoteVehicles = {};
     (window as any).mapLoaded = false;
     (window as any).worldReady = false;
     (window as any).shadersCompiled = false;
@@ -282,433 +296,118 @@ export const RaceScene: React.FC = () => {
   // 1. Room Connection & Firestore state logging
   useEffect(() => {
     if (normalizedCode) {
-      logStep("connectedToRoom", "success");
+      logStep("connectedToRoom", isMember ? "success" : "pending");
     } else {
       logStep("connectedToRoom", "failed");
     }
-  }, [normalizedCode]);
+  }, [normalizedCode, isMember, logStep]);
 
   useEffect(() => {
     if (mp.room) {
       logStep("firestoreRoomLoaded", "success");
       logStep("websocketConnected", "success"); // Bypassed with Firestore
     }
-  }, [mp.room]);
+  }, [mp.room, logStep]);
 
   // 2. Retry handler
-  const handleRetry = async () => {
-    console.log("[Race Init] Retrying initialization...");
-    setInitTimeoutTriggered(false);
-    setErrorMessage(null);
-    setInitLogs({
-      connectedToRoom: "pending",
-      firestoreRoomLoaded: "pending",
-      websocketConnected: "success",
-      mapCacheChecked: "pending",
-      mapLoaded: "pending",
-      physicsInitialized: "pending",
-      spawnPointsAssigned: "pending",
-      playerCarSpawned: "pending",
-      raceSceneMounted: "pending",
-    });
-
-    // Clear stuck counters
-    (window as any).countdownStuckSecs = 0;
-
-    const code = normalizedCode || RoomManager.getCurrentCode();
-    if (code) {
-      logStep("connectedToRoom", "success");
-      try {
-        const room = await RoomManager.attemptReconnect();
-        if (room) {
-          logStep("firestoreRoomLoaded", "success");
-        }
-      } catch (err) {
-        console.warn("Retry reconnect failed, subscription should still pick it up", err);
-      }
-    }
+  const handleRetry = () => {
+    mp.retryRoom();
+    onRetry();
   };
 
-  // 3. Global 15-second timeout for Phase 1 loading (React & Assets loading)
+  // Firestore may be offline without an error callback. Offer retry, never a
+  // deletion notice. Downloads have their own inactivity timeout per source.
   useEffect(() => {
-    const isComplete = 
-      mapReadyLocal && 
-      trackHelper && 
-      physicsService && 
-      cars.length > 0;
-
-    if (isComplete) return;
-
+    if (mp.room || mp.error || mp.roomMissing) return;
     const timer = setTimeout(() => {
-      setInitTimeoutTriggered(true);
-      setErrorMessage("Asset initialization timed out. Please check network and retry.");
-      
-      // Mark pending items as failed
-      setInitLogs((prev) => {
-        const next = { ...prev };
-        (Object.keys(next) as Array<keyof typeof next>).forEach((key) => {
-          if (next[key] === "pending") {
-            next[key] = "failed";
-          }
-        });
-        return next;
-      });
-    }, 15000); // 15 seconds
-
+      reportInitError("firestoreRoomLoaded", new Error("Timed out waiting for room data. Check your connection and retry."));
+    }, 30000);
     return () => clearTimeout(timer);
-  }, [mapReadyLocal, trackHelper, physicsService, cars.length]);
+  }, [mp.room, mp.error, mp.roomMissing, reportInitError]);
 
   // Check map cache and trigger download if needed
   useEffect(() => {
-    if (!mp.room) return;
-
-    const checkAndDownloadMap = async () => {
-      const activeMapId = mp.room.map || mp.room.selectedMap || "map1";
-      const isCustomMap = activeMapId === "race2map" || activeMapId === "racing2";
-      const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
-
-      setMapVerified(true);
-
-      if (!isCustomMap) {
-        logStep("mapCacheChecked", "success");
-        logStep("mapLoaded", "success");
-        setMapReadyLocal(true);
-        setDownloadProgress(100);
-        setMapDownloadProgress(100);
-        setMapDownloadReady(true);
-        setIsCheckingCache(false);
-        
-        if (activePlayerId && mp.room?.roomCode) {
-          try {
-            await NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
-              mapReady: true,
-              mapProgress: 100
-            });
-          } catch (e) {
-            console.error("Failed to update map status:", e);
-          }
-        }
-        return;
-      }
-
-      const mapUrl = "https://pub-a248afed72844944a7565dc9cbaacbb0.r2.dev/map/Untitled12.glb";
-      const cacheName = "map-assets-cache";
-
-      setIsCheckingCache(true);
+    if (!loadingStatusReset || !isMember) return;
+    let active = true;
+    let lastWrite = 0;
+    let writes = Promise.resolve();
+    const run = async () => {
       try {
-        const cache = await caches.open(cacheName);
-        logStep("mapCacheChecked", "success");
-        const cachedResponse = await cache.match(mapUrl);
-
-        if (cachedResponse) {
-          console.log("Map exists in browser cache!");
-          logStep("mapLoaded", "success");
-          setMapReadyLocal(true);
-          setDownloadProgress(100);
-          setMapDownloadProgress(100);
-          setMapDownloadReady(true);
-          setIsCheckingCache(false);
-          
-          if (activePlayerId && mp.room?.roomCode) {
-            try {
-              await NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
-                mapReady: true,
-                mapProgress: 100
-              });
-            } catch (e) {
-              console.error("Failed to update map status:", e);
+        setIsCheckingCache(true);
+        if (activeMapId === "race2map" || activeMapId === "racing2") {
+          await loadRacingMap((progress) => {
+            if (!active) return;
+            setIsCheckingCache(false);
+            setMapDownloadProgress(progress.percentage);
+            setDownloadedMB(progress.bytesLoaded / 1024 / 1024);
+            setTotalMB((progress.bytesTotal || 0) / 1024 / 1024);
+            if (Date.now() - lastWrite >= 1000 && progress.percentage < 100) {
+              lastWrite = Date.now();
+              writes = writes.then(async () => {
+                if (active) await NormalRoomService.updatePlayerLoadingStatus(normalizedCode, activePlayerId, { mapProgress: progress.percentage });
+              }).catch((error) => console.error("[Race Init] Map progress write failed:", error));
             }
-          }
-          return;
+          });
         }
-
-        // Trigger map download with progress reporting
-        setIsCheckingCache(false);
-        setDownloadProgress(0);
-        setMapDownloadProgress(0);
-
-        const targetUrl = `/api/proxy?url=${encodeURIComponent(mapUrl)}`;
-        let response: Response;
-        try {
-          response = await fetch(targetUrl);
-          if (!response.ok) throw new Error("Proxy fetch failed");
-        } catch (err) {
-          console.warn("Proxy fetch failed, trying direct URL fetch", err);
-          response = await fetch(mapUrl);
-        }
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch map: ${response.statusText}`);
-        }
-
-        const reader = response.body?.getReader();
-        const contentLengthHeader = response.headers.get("Content-Length");
-        const totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 47139152;
-        setTotalMB(parseFloat((totalBytes / (1024 * 1024)).toFixed(1)));
-
-        if (!reader) {
-          throw new Error("Reader not available on response body");
-        }
-
-        const chunks: Uint8Array[] = [];
-        let receivedBytes = 0;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          if (value) {
-            chunks.push(value);
-            receivedBytes += value.length;
-          }
-
-          const percent = Math.min(Math.round((receivedBytes / totalBytes) * 100), 99);
-          setDownloadProgress(percent);
-          setMapDownloadProgress(percent);
-          setDownloadedMB(parseFloat((receivedBytes / (1024 * 1024)).toFixed(1)));
-          
-          // Throttled Firestore progress update
-          if (percent % 10 === 0 && activePlayerId && mp.room?.roomCode) {
-            NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
-              mapProgress: percent,
-              mapReady: false,
-              ready: false
-            }).catch(console.error);
-          }
-        }
-
-        const combinedBlob = new Blob(chunks);
-        if (combinedBlob.size < 1000) {
-          throw new Error("Downloaded glb is invalid or too small");
-        }
-
-        await cache.put(mapUrl, new Response(combinedBlob, {
-          headers: {
-            "Content-Type": "model/gltf-binary",
-            "Content-Length": combinedBlob.size.toString(),
-          }
-        }));
-
-        console.log("Saved map asset to browser cache!");
+        await writes;
+        if (!active) return;
+        await NormalRoomService.updatePlayerLoadingStatus(normalizedCode, activePlayerId, { mapReady: true, mapProgress: 100 });
+        if (!active) return;
+        logStep("mapCacheChecked", "success");
         logStep("mapLoaded", "success");
+        setMapVerified(true);
         setMapReadyLocal(true);
-        setDownloadProgress(100);
-        setMapDownloadProgress(100);
         setMapDownloadReady(true);
-        
-        if (activePlayerId && mp.room?.roomCode) {
-          try {
-            await NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
-              mapReady: true,
-              mapProgress: 100
-            });
-          } catch (e) {
-            console.error("Failed to update map status:", e);
-          }
-        }
-      } catch (err) {
-        console.error("Map downloading/caching failed:", err);
-        logStep("mapLoaded", "failed");
-        // Graceful fallback to avoid locking users out in case of network issues
-        setMapReadyLocal(true);
-        setDownloadProgress(100);
         setMapDownloadProgress(100);
-        setMapDownloadReady(true);
         setIsCheckingCache(false);
-        
-        if (activePlayerId && mp.room?.roomCode) {
-          try {
-            await NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
-              mapReady: true,
-              mapProgress: 100
-            });
-          } catch (e) {
-            console.error("Failed to update map status fallback:", e);
-          }
-        }
+      } catch (error) {
+        if (active) reportInitError("mapLoaded", error);
       }
     };
-
-    checkAndDownloadMap();
-  }, [mp.room?.map, mp.room?.selectedMap, mp.room?.id]);
+    void run();
+    return () => { active = false; };
+  }, [activeMapId, normalizedCode, activePlayerId, loadingStatusReset, isMember, logStep, reportInitError]);
 
   // Load selected vehicles for all players in the room
   useEffect(() => {
-    if (!mp.room || !mapReadyLocal) return;
-
+    if (!mapReadyLocal || !isMember) return;
     let active = true;
+    let lastWrite = 0;
+    let writes = Promise.resolve();
 
     const loadAllPlayerCars = async () => {
       try {
-        const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
-        const localRacer = mp.room.players.find((p: any) => p.uid === activePlayerId || p.id === activePlayerId);
-        const myNormalizedCarId = getCarIdString(localRacer?.carId);
-
-        setCarVerified(true);
-
-        const uniqueCarIds = Array.from(
-          new Set(
-            mp.room.players.map((p: any) => {
-              const cid = getCarIdString(p.carId);
-              if (cid.toLowerCase().includes("porsche")) return "porsche";
-              if (cid.toLowerCase().includes("bugatti")) return "bugatti";
-              return "ferrari";
-            })
-          )
-        ) as string[];
-
-        console.log("[Race Init] Unique car IDs to load (normalized):", uniqueCarIds);
-
-        for (let i = 0; i < uniqueCarIds.length; i++) {
+        const room = roomRef.current;
+        const localRacer = room.players.find((p) => (p.uid || p.id) === activePlayerId);
+        const myKey = getNormalizedCarKey(getCarIdString(localRacer.carId));
+        const keys = [...new Set(room.players.map((p) => getNormalizedCarKey(getCarIdString(p.carId))))];
+        for (const key of keys) {
           if (!active) return;
-          const carId = uniqueCarIds[i];
-          const isMyCar = carId === myNormalizedCarId || (carId === "ferrari" && !["porsche", "bugatti"].includes(myNormalizedCarId));
-          const carMapKey = carId === "porsche"
-            ? "porsche_911_gt3"
-            : carId === "bugatti"
-              ? "bugatti_chiron_top_edition"
-              : "ferrari_purosangue";
-
-          console.log(`[Race Init] Starting load for: ${carMapKey}, isMyCar: ${isMyCar}`);
-          setCarLoadingLabel(`Loading vehicle: ${carId.toUpperCase()}`);
-
-          if (isMyCar) {
-            setCarDownloadReady(false);
-            setCarDownloadProgress(0);
-          }
-
-          // Check if already loaded in gltfModelCache
-          if (gltfModelCache[carMapKey as keyof typeof gltfModelCache]) {
-            console.log(`[Race Init] GLB already loaded in cache for: ${carMapKey}`);
-            if (isMyCar) {
-              setDownloadProgress(100);
-              setCarDownloadProgress(100);
-              setCarDownloadReady(true);
-              setGlbParsing(true);
-              
-              if (activePlayerId && mp.room?.roomCode) {
-                try {
-                  await NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
-                    carReady: true,
-                    carProgress: 100,
-                    glbParsing: true
-                  });
-                } catch (e) {
-                  console.error("Failed to update car status cached:", e);
-                }
-              }
+          setCarLoadingLabel(`Loading vehicle: ${key}`);
+          await verifyCar(key, (percentage) => {
+            if (!active || key !== myKey) return;
+            setCarDownloadProgress(percentage);
+            setGlbParsing(percentage >= 99 && percentage < 100);
+            if (Date.now() - lastWrite >= 1000 && percentage < 100) {
+              lastWrite = Date.now();
+              writes = writes.then(async () => {
+                if (active) await NormalRoomService.updatePlayerLoadingStatus(normalizedCode, activePlayerId, { carProgress: percentage });
+              }).catch((error) => console.error("[Race Init] Car progress write failed:", error));
             }
-            continue;
-          }
-
-          // Initialize AssetManager if needed
-          await AssetManager.init();
-
-          // 1. Try to load from AssetManager (IndexedDB)
-          let blob = await AssetManager.getVerifiedBlob(carMapKey);
-          if (!blob) {
-            console.log(`[Race Init] ${carMapKey} not in local store, streaming...`);
-            const asset = AssetManager.getAssets().find((a) => a.id === carMapKey);
-            if (asset?.url) {
-              try {
-                // Download with progress
-                blob = await AssetManager.downloadAsset(carMapKey, (prog) => {
-                  if (active) {
-                    setDownloadProgress(prog.percent);
-                    if (isMyCar) {
-                      setCarDownloadProgress(prog.percent);
-                      if (prog.percent % 10 === 0 && activePlayerId && mp.room?.roomCode) {
-                        NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
-                          carProgress: prog.percent,
-                          carReady: false,
-                          ready: false
-                        }).catch(console.error);
-                      }
-                    }
-                  }
-                });
-              } catch (downloadErr) {
-                console.warn(`[Race Init] Failed to download asset ${carMapKey}, trying direct fetch fallback...`, downloadErr);
-                const res = await fetch(asset.url);
-                if (res.ok) {
-                  blob = await res.blob();
-                }
-              }
-            }
-          } else {
-            setDownloadProgress(100);
-            if (isMyCar) {
-              setCarDownloadProgress(100);
-              setCarDownloadReady(true);
-            }
-          }
-
-          if (isMyCar) {
-            setCarDownloadProgress(100);
-            setCarDownloadReady(true);
-            setGlbParsing(true);
-            
-            if (activePlayerId && mp.room?.roomCode) {
-              try {
-                await NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
-                  carReady: true,
-                  carProgress: 100,
-                  glbParsing: true
-                });
-              } catch (e) {
-                console.error("Failed to update car status downloaded:", e);
-              }
-            }
-          }
-
-          if (blob) {
-            const buffer = await blob.arrayBuffer();
-            const loader = new GLTFLoader();
-            const dracoLoader = new DRACOLoader();
-            dracoLoader.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.6/");
-            loader.setDRACOLoader(dracoLoader);
-            loader.register((parser) => new GLTFMaterialsPBRSpecularGlossinessExtension(parser));
-
-            await new Promise<void>((resolvePromise, rejectPromise) => {
-              loader.parse(
-                buffer,
-                "",
-                (gltf) => {
-                  try {
-                    applyGltfMaterialFix(gltf.scene);
-                    (gltfModelCache as any)[carMapKey] = gltf.scene;
-                    gltfModelCache.isLoaded = true;
-                    dracoLoader.dispose();
-                    console.log(`[Race Init] ${carMapKey} successfully parsed and cached.`);
-                    if (isMyCar) {
-                      setGlbParsed(true);
-                    }
-                    resolvePromise();
-                  } catch (err) {
-                    dracoLoader.dispose();
-                    rejectPromise(err);
-                  }
-                },
-                (err) => {
-                  dracoLoader.dispose();
-                  rejectPromise(err);
-                }
-              );
-            });
-          } else {
-            throw new Error(`Failed to retrieve GLB blob for ${carMapKey}`);
-          }
+          });
         }
-
-        if (active) {
-          setCarsLoadedMap(true);
-        }
-      } catch (err) {
-        console.error("[Race Init] Failed to load player cars", err);
-        // Fallback: set to true so users don't get stuck
-        if (active) {
-          setCarsLoadedMap(true);
-        }
+        await writes;
+        if (!active) return;
+        await NormalRoomService.updatePlayerLoadingStatus(normalizedCode, activePlayerId, { carReady: true, carProgress: 100, glbParsing: false });
+        if (!active) return;
+        setCarVerified(true);
+        setCarDownloadProgress(100);
+        setCarDownloadReady(true);
+        setGlbParsing(false);
+        setGlbParsed(true);
+        setCarsLoadedMap(true);
+      } catch (error) {
+        if (active) reportInitError("playerCarSpawned", error);
       }
     };
 
@@ -717,146 +416,55 @@ export const RaceScene: React.FC = () => {
     return () => {
       active = false;
     };
-  }, [mp.room?.id, mapReadyLocal]);
+  }, [normalizedCode, activePlayerId, mapReadyLocal, isMember, reportInitError]);
 
   // Load track helper, physics service, and spawn racers
   useEffect(() => {
-    if (!mp.room || !mapReadyLocal || !carsLoadedMap) return;
-
-    try {
-      const activeMap = mp.room.map || mp.room.selectedMap || "map1";
-      const helper = new TrackGeometryHelper(activeMap);
-      const physics = new GamePhysicsService(helper);
-
-      setTrackHelper(helper);
-      setPhysicsService(physics);
-      logStep("physicsInitialized", "success");
-
-      const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
-      const localRacer = mp.room.players.find((p: any) => p.uid === activePlayerId || p.id === activePlayerId);
-
-      const rawCarId = getCarIdString(localRacer?.carId);
-      const baseCarId = rawCarId.toLowerCase().includes("porsche")
-        ? "porsche"
-        : rawCarId.toLowerCase().includes("bugatti")
-          ? "bugatti"
-          : "ferrari";
-
-      const modelKey =
-        baseCarId === "ferrari"
-          ? "ferrari_purosangue"
-          : baseCarId === "bugatti"
-            ? "bugatti_chiron_top_edition"
-            : "porsche_911_gt3";
-
-      setPlayerSelectedModelKey(modelKey);
-
-      // Build starter lineup of remote + human players on spawn grid
-      const lineup: CarState[] = [];
-      const curveLength = helper.curve.getLength();
-      const wheelRadius = 0.38;
-
-      // Deterministically sort the players list such that:
-      // - The host is always first (index 0, Grid 1)
-      // - The remaining players are sorted consistently to ensure all clients agree on the order
-      const sortedPlayers = [...mp.room.players].sort((a, b) => {
-        const aIsHost = a.uid === mp.room.hostId || a.id === mp.room.hostId || a.isHost;
-        const bIsHost = b.uid === mp.room.hostId || b.id === mp.room.hostId || b.isHost;
-        if (aIsHost && !bIsHost) return -1;
-        if (!aIsHost && bIsHost) return 1;
-        const idA = a.uid || a.id || "";
-        const idB = b.uid || b.id || "";
-        return idA.localeCompare(idB);
-      });
-
-      sortedPlayers.forEach((p: any, idx: number) => {
-        const isMe = p.uid === activePlayerId || p.id === activePlayerId;
-        const isAI = p.isAI;
-
-        const side = idx % 2 === 0 ? -1 : 1;
-        const spacingDistance = 15.0 + idx * 8.0;
-        const progress = (((1.0 - spacingDistance / curveLength) % 1.0) + 1.0) % 1.0;
-
-        const pt = helper.curve.getPointAt(progress);
-        const tangent = helper.curve.getTangentAt(progress).normalize();
-        const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
-        const spawnPos = pt.clone().addScaledVector(normal, side * 2.5);
-
-        const roadHeightTest = terrainManager.getRoadHeight(spawnPos);
-        const spawnY = roadHeightTest + wheelRadius;
-        const startAngle = Math.atan2(tangent.x, tangent.z);
-
-        const carId = isMe ? "player" : isAI ? p.id : `remote_${p.id || p.uid}`;
-        const amIHost = mp.room.hostId === activePlayerId;
-
-        const pRawCarId = getCarIdString(p.carId);
-        const pBaseCarId = pRawCarId.toLowerCase().includes("porsche")
-          ? "porsche"
-          : pRawCarId.toLowerCase().includes("bugatti")
-            ? "bugatti"
-            : "ferrari";
-
-        const hasSavedState = p.position && typeof p.position.x === 'number' && typeof p.position.z === 'number';
-        const finalPosition = hasSavedState ? { x: p.position.x, y: p.position.y ?? spawnY, z: p.position.z } : { x: spawnPos.x, y: spawnY, z: spawnPos.z };
-        const finalVelocity = hasSavedState && p.velocity ? { x: p.velocity.x ?? 0, y: p.velocity.y ?? 0, z: p.velocity.z ?? 0 } : { x: 0, y: 0, z: 0 };
-        const finalAngle = hasSavedState && typeof p.angle === 'number' ? p.angle : startAngle;
-        const finalSpeed = hasSavedState && typeof p.speed === 'number' ? p.speed : 0;
-        const finalLap = hasSavedState && typeof p.currentLap === 'number' ? p.currentLap : 1;
-        const finalCheckpoint = hasSavedState && typeof p.currentCheckpointIndex === 'number' ? p.currentCheckpointIndex : 0;
-        const finalTotalDistance = hasSavedState && typeof p.totalDistanceTraveled === 'number' ? p.totalDistanceTraveled : -idx * 8.5;
-        const finalFinished = hasSavedState && typeof p.isFinished === 'boolean' ? p.isFinished : false;
-
-        lineup.push({
-          id: carId,
-          name: p.playerName || p.name || "Driver",
-          isAI: isAI && amIHost,
-          color: p.carColor || "#0062ff",
-          carId: pBaseCarId,
-          position: finalPosition,
-          velocity: finalVelocity,
-          speed: finalSpeed,
-          angle: finalAngle,
-          angularVelocity: 0,
-          driftFactor: 0,
-          isDrifting: hasSavedState && typeof p.isDrifting === 'boolean' ? p.isDrifting : false,
-          currentLap: finalLap,
-          currentCheckpointIndex: finalCheckpoint,
-          distanceToNextCheckpoint: 999,
-          racePosition: idx + 1,
-          totalDistanceTraveled: finalTotalDistance,
-          isFinished: finalFinished,
-          lastActiveTime: Date.now(),
-          nitroCharged: 60,
-          isNitroActive: false,
-          stuckTimer: 0,
-          aiTargetNode: 0,
-          aiSpeedFactor: 1,
-          aiAggression: mp.room.difficulty === "easy" ? 0.45 : mp.room.difficulty === "medium" ? 0.72 : 0.95,
-        });
-      });
-
-      setCars(lineup);
-      logStep("spawnPointsAssigned", "success");
-      setVehicleInitProgress(30);
-      setPhase("menu");
-      setCountdown(60);
-      setElapsedTime(0);
-      setIsPaused(false);
-    } catch (e) {
-      console.error("Physics or lineup initialization failed:", e);
-      logStep("physicsInitialized", "failed");
-      logStep("spawnPointsAssigned", "failed");
-    }
-  }, [mp.room?.id, mapReadyLocal, carsLoadedMap]);
+    if (!mapReadyLocal || !carsLoadedMap || !isMember) return;
+    let active = true;
+    let world: Racing2World | null = null;
+    const initialize = async () => {
+      let stage: keyof typeof initLogs = "mapLoaded";
+      try {
+        const helper = new TrackGeometryHelper(activeMapId);
+        if (helper.mapType === "racing2") {
+          // Parse and bake the actual GLB before computing any player transform.
+          world = new Racing2World(new THREE.Scene(), helper, false);
+          await world.readyPromise;
+        }
+        if (!active) return;
+        stage = "physicsInitialized";
+        const physics = new GamePhysicsService(helper);
+        logStep("physicsInitialized", "success");
+        stage = "spawnPointsAssigned";
+        const room = roomRef.current;
+        const lineup = buildMultiplayerLineup(room, activePlayerId, helper, world?.gridSpawns, latestPlayerStates.current);
+        const localRacer = room.players.find((p) => (p.uid || p.id) === activePlayerId);
+        setPlayerSelectedModelKey(getNormalizedCarKey(getCarIdString(localRacer.carId)));
+        setPreparedWorld(world);
+        setTrackHelper(helper);
+        setPhysicsService(physics);
+        setCars(lineup);
+        logStep("spawnPointsAssigned", "success");
+        setVehicleInitProgress(30);
+        setPhase("menu");
+        setElapsedTime(0);
+        setIsPaused(false);
+      } catch (error) {
+        if (active) reportInitError(stage, error);
+      }
+    };
+    void initialize();
+    return () => { active = false; world?.dispose(); };
+  }, [activeMapId, normalizedCode, activePlayerId, mapReadyLocal, carsLoadedMap, isMember, logStep, reportInitError]);
 
   // Reset player's loading status on mount/entry to the race scene
   useEffect(() => {
-    if (!mp.room?.roomCode) return;
-    const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
-    if (!activePlayerId) return;
+    if (!isMember) return;
+    let active = true;
 
     console.log("[Race Init] Resetting player loading status for a fresh race session...");
-    NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
+    resetLoadingRef.current ??= NormalRoomService.updatePlayerLoadingStatus(normalizedCode, activePlayerId, {
       mapReady: false,
       mapProgress: 0,
       carReady: false,
@@ -864,18 +472,26 @@ export const RaceScene: React.FC = () => {
       glbParsing: false,
       vehicleInitialized: false,
       sceneReady: false,
-      connected: false,
+      connected: true,
       ready: false
-    }).catch((err) => {
-      console.error("Failed to reset player loading status on mount:", err);
     });
-  }, [mp.room?.roomCode, mp.playerId]);
+    resetLoadingRef.current.then(() => {
+      if (active) setLoadingStatusReset(true);
+    }).catch((err) => {
+      if (active) reportInitError("firestoreRoomLoaded", err);
+    });
+    void measureServerTimeOffset(normalizedCode, activePlayerId);
+    return () => { active = false; };
+  }, [normalizedCode, activePlayerId, isMember, reportInitError]);
 
   // Reactive vehicle initialization tracker
   useEffect(() => {
-    if (!mp.room || !mapReadyLocal || !carsLoadedMap || !trackHelper || !physicsService || cars.length === 0) return;
+    if (initTimeoutTriggered || !isMember || !mapReadyLocal || !carsLoadedMap || !trackHelper || !physicsService || cars.length === 0) return;
 
     let active = true;
+    const timeout = setTimeout(() => {
+      reportInitError("raceSceneMounted", new Error("The verified map and vehicles loaded, but the renderer did not finish mounting the player's car within 60 seconds."));
+    }, 60000);
     const checkInterval = setInterval(async () => {
       if (!active) return;
 
@@ -888,12 +504,14 @@ export const RaceScene: React.FC = () => {
         setVehicleInitProgress(100);
         setVehicleInitReady(true);
         clearInterval(checkInterval);
+        clearTimeout(timeout);
+        logStep("playerCarSpawned", "success");
+        logStep("raceSceneMounted", "success");
 
-        const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
-        if (activePlayerId && mp.room?.roomCode) {
+        if (activePlayerId) {
           console.log("[Race Init] Local Vehicle Ready! Updating Firestore status to ready.");
           try {
-            await NormalRoomService.updatePlayerLoadingStatus(mp.room.roomCode, activePlayerId, {
+            await NormalRoomService.updatePlayerLoadingStatus(normalizedCode, activePlayerId, {
               mapReady: true,
               carReady: true,
               vehicleInitialized: true,
@@ -902,7 +520,7 @@ export const RaceScene: React.FC = () => {
               ready: true
             });
           } catch (e) {
-            console.error("Failed to update ready status:", e);
+            if (active) reportInitError("firestoreRoomLoaded", e);
           }
         }
       }
@@ -911,11 +529,13 @@ export const RaceScene: React.FC = () => {
     return () => {
       active = false;
       clearInterval(checkInterval);
+      clearTimeout(timeout);
     };
-  }, [mp.room?.id, mapReadyLocal, carsLoadedMap, trackHelper, physicsService, cars.length]);
+  }, [normalizedCode, activePlayerId, mapReadyLocal, carsLoadedMap, trackHelper, physicsService, cars.length, initTimeoutTriggered, isMember, logStep, reportInitError]);
 
   // Host continuously watches all players
   useEffect(() => {
+    if (initTimeoutTriggered) return;
     if (!mp.room || !mp.room.players || !mp.room.roomCode) return;
 
     const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
@@ -943,7 +563,7 @@ export const RaceScene: React.FC = () => {
         console.error("Failed to update room status to countdown:", err);
       });
     }
-  }, [mp.room?.players, mp.room?.status, mp.room?.raceStarted, mp.room?.roomCode, mp.room?.hostId, mp.playerId]);
+  }, [mp.room, mp.playerId, initTimeoutTriggered]);
 
   // Listen for room status and local loading readiness to manage game phase and loading screen
   useEffect(() => {
@@ -953,8 +573,7 @@ export const RaceScene: React.FC = () => {
     const isHost = mp.room.hostId === activePlayerId;
     const countdownStartMillis = getMillisFromServerTime(mp.room.countdownStartTime);
     const firestoreRaceStartTime = countdownStartMillis !== null ? countdownStartMillis + WS_START_DELAY_MS : null;
-    const authoritativeRaceStartTime =
-      typeof wsRaceStartTime === "number" && Number.isFinite(wsRaceStartTime) ? wsRaceStartTime : firestoreRaceStartTime;
+    const authoritativeRaceStartTime = firestoreRaceStartTime ?? wsRaceStartTime;
 
     if (mp.room.status === "racing" && !mp.room.raceStarted) {
       // 1. Loading/waiting phase
@@ -980,7 +599,7 @@ export const RaceScene: React.FC = () => {
       }
 
       // All clients render countdown from one shared authoritative future start timestamp.
-      // Priority: WebSocket race_start -> Firestore countdownStartTime fallback.
+      // Firestore is shared by relay-connected and relay-fallback clients alike.
       if (authoritativeRaceStartTime) {
         const tick = () => {
           const now = getSynchronizedServerTime();
@@ -1098,6 +717,7 @@ export const RaceScene: React.FC = () => {
     if (!mp.room?.roomCode) return;
     const unsub = NormalRoomService.listenToPlayers(mp.room.roomCode, (playersList) => {
       const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
+      latestPlayerStates.current = new Map(playersList.map((p) => [p.uid, p]));
       playersList.forEach((p) => {
         // Only track remote players in this map
         if (p.uid === activePlayerId) return;
@@ -1111,13 +731,14 @@ export const RaceScene: React.FC = () => {
           remotePlayersMapRef.current.delete(uid);
         }
       }
-    });
+    }, (error) => reportInitError("firestoreRoomLoaded", error));
 
     return () => {
       unsub();
       remotePlayersMapRef.current.clear();
+      latestPlayerStates.current.clear();
     };
-  }, [mp.room?.roomCode, mp.playerId]);
+  }, [mp.room?.roomCode, mp.playerId, reportInitError]);
 
   // Connect to vehicle WebSocket relay alongside Firestore subscription
   useEffect(() => {
@@ -1154,6 +775,10 @@ export const RaceScene: React.FC = () => {
         }
       },
       (leftPid) => {
+        if (roomRef.current?.players.some((p) => (p.uid || p.id) === leftPid)) {
+          console.info(`[Race] ${leftPid} lost the relay connection; retaining Firestore membership.`);
+          return;
+        }
         // Remove left player's car from the cars list
         setCars((prevCars) => {
           return prevCars.filter((car) => {
@@ -1214,7 +839,7 @@ export const RaceScene: React.FC = () => {
       if (!remoteVehicle && vehicleRenderer) {
         console.log("[REMOTE] Creating remote vehicle", remotePid);
         const carIdKey = `remote_${remotePid}`;
-        const pInfo = mp.room?.players?.find((p: any) => (p.uid || p.id) === remotePid);
+        const pInfo = roomRef.current?.players?.find((p: any) => (p.uid || p.id) === remotePid);
         const rawCid = getCarIdString(wsData.carId || pInfo?.carId || "ferrari");
         const baseCarId = rawCid.toLowerCase().includes("porsche")
           ? "porsche"
@@ -1295,7 +920,7 @@ export const RaceScene: React.FC = () => {
 
         let next;
         if (!hasCar) {
-          const pInfo = mp.room?.players?.find((p: any) => (p.uid || p.id) === remotePid);
+          const pInfo = roomRef.current?.players?.find((p: any) => (p.uid || p.id) === remotePid);
           const rawCid = getCarIdString(wsData.carId || pInfo?.carId || "ferrari");
           const baseCarId = rawCid.toLowerCase().includes("porsche")
             ? "porsche"
@@ -1369,7 +994,7 @@ export const RaceScene: React.FC = () => {
     return () => {
       disconnectSocket();
     };
-  }, [mp.room?.roomCode, mp.playerId, mp.room?.players]);
+  }, [mp.room?.roomCode, mp.playerId]);
 
   // Callback triggered inside the canvas animation frames
   const handleTickUpdate = (updatedCars: CarState[]) => {
@@ -1543,8 +1168,7 @@ export const RaceScene: React.FC = () => {
   };
 
   const handleHomeMenu = () => {
-    setPhase("menu");
-    navigate("/rooms");
+    void handleExitConfirm();
   };
 
   if (isExiting) {
@@ -1578,7 +1202,7 @@ export const RaceScene: React.FC = () => {
               <h2 className="text-lg font-black uppercase tracking-wider text-white">
                 INITIALIZATION FAILED
               </h2>
-              <p className="text-xs text-slate-400 font-mono">
+              <p className="text-xs text-slate-400 font-mono break-words max-h-40 overflow-y-auto">
                 {errorMessage || "Preparing racing grids & assets"}
               </p>
             </div>
@@ -1637,7 +1261,7 @@ export const RaceScene: React.FC = () => {
                 RETRY INIT
               </button>
               <button
-                onClick={() => navigate("/rooms")}
+                onClick={handleExitConfirm}
                 className="px-6 py-2.5 bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-300 font-black font-mono text-xs rounded transition-colors cursor-pointer"
               >
                 EXIT LOBBY
@@ -1681,7 +1305,7 @@ export const RaceScene: React.FC = () => {
     playerName: currentPl?.name || "Driver",
     difficulty: mp.room.difficulty || "medium",
     carColor: currentPl?.color || "#0062ff",
-    selectedCar: mp.room.selectedCar || "ferrari",
+    selectedCar: currentPl?.carId || "ferrari",
     selectedMap: mp.room.map || mp.room.selectedMap || "map1",
   };
 
@@ -1701,11 +1325,14 @@ export const RaceScene: React.FC = () => {
       }}
     >
       {/* Three.js interactive Canvas component */}
+      <ErrorBoundary fallback={null} onError={(error) => reportInitError("raceSceneMounted", error)}>
       <GameCanvas
         cars={cars}
         playerControls={controls}
         physicsService={physicsService}
         trackHelper={trackHelper}
+        preparedWorld={preparedWorld}
+        onInitializationError={(error) => reportInitError("raceSceneMounted", error)}
         isPaused={isPaused}
         gameState={phase}
         onFinishRace={handleRaceFinish}
@@ -1715,6 +1342,7 @@ export const RaceScene: React.FC = () => {
         weather={weatherValue}
         raceSettings={gameSettings}
       />
+      </ErrorBoundary>
 
       {/* Multiplayer Loader Overlay */}
       {loadingMultiplayer && (
@@ -1858,7 +1486,9 @@ export const RaceScene: React.FC = () => {
 };
 
 export const UserRacePage: React.FC = () => {
-  return <RaceScene />;
+  const { roomCode } = useParams<{ roomCode: string }>();
+  const [attempt, setAttempt] = useState(0);
+  return <RaceScene key={`${roomCode?.trim().toUpperCase()}:${attempt}`} onRetry={() => setAttempt((value) => value + 1)} />;
 };
 
 export default UserRacePage;

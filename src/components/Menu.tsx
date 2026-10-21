@@ -153,7 +153,7 @@ export const Menu: React.FC<MenuProps> = ({ onStartGame, onCreateRoom, onJoinRoo
     if (closedNoOpponents) {
       sessionStorage.removeItem("room_closed_no_opponents");
       import("sonner").then(({ toast }) => {
-        toast.error("The room has been closed because there are no opponents remaining.", {
+        toast.error("This multiplayer room is no longer available.", {
           position: "top-center",
           duration: 5000,
         });
@@ -231,6 +231,8 @@ export const Menu: React.FC<MenuProps> = ({ onStartGame, onCreateRoom, onJoinRoo
   const [activePopup, setActivePopup] = useState<"none" | "create_room" | "join_room" | "lobby">("none");
   const [createdRoomName, setCreatedRoomName] = useState(`${playerName}'s Grid`);
   const [generatedCode, setGeneratedCode] = useState("");
+  const [creatingRoom, setCreatingRoom] = useState(false);
+  const creatingRoomRef = useRef(false);
   const [enteredJoinCode, setEnteredJoinCode] = useState("");
   const [joinError, setJoinError] = useState<string | null>(null);
   const [maxPlayers, setMaxPlayers] = useState<number>(3);
@@ -595,15 +597,16 @@ export const Menu: React.FC<MenuProps> = ({ onStartGame, onCreateRoom, onJoinRoo
   };
 
   const handleCreateRoomClick = () => {
-    const code = RoomCodeGenerator.generate();
-    setGeneratedCode(code.toUpperCase());
+    setGeneratedCode("");
     setCreatedRoomName(`${playerName}'s Grid`);
     setMaxPlayers(3);
     setActivePopup("create_room");
   };
 
   const handleConfirmCreateRoom = async () => {
-    if (!profile) return;
+    if (!profile || creatingRoomRef.current) return;
+    creatingRoomRef.current = true;
+    setCreatingRoom(true);
     try {
       const finalCode = await NormalRoomService.createRoom(
         profile.uid,
@@ -613,9 +616,14 @@ export const Menu: React.FC<MenuProps> = ({ onStartGame, onCreateRoom, onJoinRoo
         "race2map",
         maxPlayers,
       );
+      setGeneratedCode(finalCode);
       navigate(`/room/${finalCode}`);
     } catch (err) {
       console.error(err);
+      toast.error(err instanceof Error ? err.message : "Failed to create room.");
+    } finally {
+      creatingRoomRef.current = false;
+      setCreatingRoom(false);
     }
   };
 
@@ -1271,7 +1279,7 @@ export const Menu: React.FC<MenuProps> = ({ onStartGame, onCreateRoom, onJoinRoo
                   <span className="text-[9px] uppercase tracking-widest font-black text-purple-300 font-mono">
                     INVITATION CODE
                   </span>
-                  <p className="text-2xl font-mono font-black tracking-[4px] text-white select-all">{generatedCode}</p>
+                  <p className="text-2xl font-mono font-black tracking-[4px] text-white select-all">{generatedCode || "PENDING"}</p>
                 </div>
 
                 <div className="space-y-1.5">
@@ -1332,9 +1340,10 @@ export const Menu: React.FC<MenuProps> = ({ onStartGame, onCreateRoom, onJoinRoo
                 </button>
                 <button
                   onClick={handleConfirmCreateRoom}
+                  disabled={creatingRoom}
                   className="py-2.5 bg-gradient-to-r from-purple-700 to-fuchsia-600 hover:brightness-110 text-white rounded-xl font-black uppercase text-[9px] tracking-widest transition shadow-lg shadow-purple-500/25 cursor-pointer animate-pulse"
                 >
-                  OPEN LOBBY
+                  {creatingRoom ? "CREATING..." : "OPEN LOBBY"}
                 </button>
               </div>
             </motion.div>
