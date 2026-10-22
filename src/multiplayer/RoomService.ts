@@ -611,6 +611,9 @@ export class RoomService {
     totalMB: number
   ): Promise<void> {
     const cleanCode = roomCode.toUpperCase().trim();
+    const currentUid = auth.currentUser?.uid;
+    console.log(`[Map Download Diagnostic] Room: ${cleanCode}, Firebase UID: ${currentUid}, Doc ID: ${playerId}, Progress: ${progress}%, Ready: ${mapReady}`);
+
     const roomRef = doc(db, "rooms", cleanCode);
     const playerRef = doc(db, "rooms", cleanCode, "players", playerId);
 
@@ -628,13 +631,12 @@ export class RoomService {
         const isCompleted = progress >= 100 || mapReady;
 
         const updatedPlayers = players.map((p) => {
-          if (p.uid === playerId) {
+          if ((p.uid || p.id) === playerId) {
             return {
               ...p,
               mapReady: isCompleted,
               mapDownloaded: isCompleted,
-              ready: isCompleted,
-              isReady: isCompleted,
+              mapProgress: progress,
               downloadProgress: progress,
               downloadedMB,
               totalMB,
@@ -651,14 +653,14 @@ export class RoomService {
         transaction.set(playerRef, {
           mapReady: isCompleted,
           mapDownloaded: isCompleted,
-          ready: isCompleted,
-          isReady: isCompleted,
+          mapProgress: progress,
           downloadProgress: progress,
           downloadedMB,
           totalMB,
         }, { merge: true });
       });
     } catch (e) {
+      console.error(`[Map Download Firestore Error] Room: ${cleanCode}, Firebase UID: ${currentUid}, Doc ID: ${playerId}, Error:`, e);
       handleFirestoreError(e, OperationType.WRITE, `rooms/${cleanCode}/players/${playerId}`);
       throw e;
     }
@@ -683,6 +685,9 @@ export class RoomService {
     }
   ): Promise<void> {
     const cleanCode = roomCode.toUpperCase().trim();
+    const currentUid = auth.currentUser?.uid;
+    console.log(`[Player Loading Diagnostic] Room: ${cleanCode}, Firebase UID: ${currentUid}, Doc ID: ${playerId}, Status:`, JSON.stringify(status));
+
     const roomRef = doc(db, "rooms", cleanCode);
     const playerRef = doc(db, "rooms", cleanCode, "players", playerId);
 
@@ -697,11 +702,17 @@ export class RoomService {
           throw new Error("Player is no longer a member of this room.");
         }
 
+        const normalizedStatus = {
+          ...status,
+          ...(status.mapProgress !== undefined ? { downloadProgress: status.mapProgress } : {}),
+          ...(status.mapReady !== undefined ? { mapDownloaded: status.mapReady } : {}),
+        };
+
         const updatedPlayers = players.map((p) => {
-          if (p.uid === playerId || p.id === playerId) {
+          if ((p.uid || p.id) === playerId) {
             return {
               ...p,
-              ...status,
+              ...normalizedStatus,
               isReady: status.ready !== undefined ? status.ready : (p.isReady ?? false),
             };
           }
@@ -714,11 +725,12 @@ export class RoomService {
         });
 
         transaction.set(playerRef, {
-          ...status,
+          ...normalizedStatus,
           ...(status.ready !== undefined ? { isReady: status.ready } : {}),
         }, { merge: true });
       });
     } catch (e) {
+      console.error(`[Player Loading Firestore Error] Room: ${cleanCode}, Firebase UID: ${currentUid}, Doc ID: ${playerId}, Error:`, e);
       handleFirestoreError(e, OperationType.WRITE, `rooms/${cleanCode}/players/${playerId}`);
       throw e;
     }

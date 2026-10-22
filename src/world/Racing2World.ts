@@ -175,7 +175,16 @@ export class Racing2World {
               if (!this.disposed) this.showOverlay(`Loading map… ${progress.percentage}%`, false);
             });
             const resourcePath = new URL(".", new URL(RACING_MAP_URL, window.location.href)).href;
-            const gltf = await loader.parseAsync(asset.buffer, resourcePath);
+            const parsePromise = loader.parseAsync(asset.buffer, resourcePath);
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              timeoutId = setTimeout(() => {
+                reject(new Error("Map GLB parsing timed out (60s limit reached)"));
+              }, 60000);
+            });
+            const gltf = await Promise.race([parsePromise, timeoutPromise]).finally(() => {
+              clearTimeout(timeoutId);
+            });
             if (!gltf.scene) throw new Error("Map GLB contained no scene");
             Racing2World.cachedGltf = gltf;
             return gltf;

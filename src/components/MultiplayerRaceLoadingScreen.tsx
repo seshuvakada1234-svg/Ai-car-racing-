@@ -78,8 +78,21 @@ export const MultiplayerRaceLoadingScreen: React.FC<MultiplayerRaceLoadingScreen
   // Filter only human players for the lobby list
   const humanPlayers = players.filter((p) => !p.isAI);
 
-  const getPlayerStatusLabel = (p: any) => {
-    if (p.ready && p.mapReady && p.carReady && p.sceneReady) {
+  const getPlayerStatusLabel = (p: any, isMe = false) => {
+    const isMapDone = isMe ? (mapDownloadReady || p.mapReady || p.mapDownloaded) : (p.mapReady === true || p.mapDownloaded === true);
+    const mapProg = isMe && mapDownloadProgress !== undefined 
+      ? mapDownloadProgress 
+      : (p.mapProgress !== undefined ? p.mapProgress : (p.downloadProgress !== undefined ? p.downloadProgress : 0));
+
+    const isCarDone = isMe ? (carDownloadReady || p.carReady) : (p.carReady === true);
+    const carProg = isMe && carDownloadProgress !== undefined 
+      ? carDownloadProgress 
+      : (p.carProgress !== undefined ? p.carProgress : 0);
+
+    const isGlbDone = isMe ? (glbParsed || !p.glbParsing) : (p.glbParsing === false);
+    const isVehicleDone = isMe ? (vehicleInitReady || p.vehicleInitialized) : (p.vehicleInitialized === true);
+
+    if (p.ready && isMapDone && isCarDone && p.sceneReady) {
       return (
         <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
           <Check className="w-3.5 h-3.5" /> READY
@@ -87,7 +100,7 @@ export const MultiplayerRaceLoadingScreen: React.FC<MultiplayerRaceLoadingScreen
       );
     }
     
-    if (p.vehicleInitialized) {
+    if (isVehicleDone) {
       return (
         <span className="flex items-center gap-1.5 text-cyan-400">
           <Check className="w-3.5 h-3.5" /> VEHICLE INITIALIZED
@@ -95,7 +108,7 @@ export const MultiplayerRaceLoadingScreen: React.FC<MultiplayerRaceLoadingScreen
       );
     }
 
-    if (p.glbParsing) {
+    if (p.glbParsing || (isMe && glbParsing)) {
       return (
         <span className="flex items-center gap-1.5 text-fuchsia-400 animate-pulse">
           <Loader2 className="w-3 h-3 animate-spin" /> PARSING GLB
@@ -103,7 +116,7 @@ export const MultiplayerRaceLoadingScreen: React.FC<MultiplayerRaceLoadingScreen
       );
     }
 
-    if (p.carReady) {
+    if (isCarDone) {
       return (
         <span className="flex items-center gap-1.5 text-amber-400">
           <Check className="w-3.5 h-3.5" /> CAR VERIFIED
@@ -111,19 +124,19 @@ export const MultiplayerRaceLoadingScreen: React.FC<MultiplayerRaceLoadingScreen
       );
     }
 
-    if (p.mapReady) {
-      const carProg = p.carProgress !== undefined ? p.carProgress : 0;
+    if (isMapDone) {
+      const displayCarProg = isCarDone ? 100 : Math.min(99, carProg);
       return (
         <span className="flex items-center gap-1.5 text-amber-400">
-          <Loader2 className="w-3 h-3 animate-spin" /> DOWNLOADING CAR ({carProg}%)
+          <Loader2 className="w-3 h-3 animate-spin" /> DOWNLOADING CAR ({displayCarProg}%)
         </span>
       );
     }
 
-    const mapProg = p.mapProgress !== undefined ? p.mapProgress : 0;
+    const displayMapProg = isMapDone ? 100 : Math.min(99, mapProg);
     return (
       <span className="flex items-center gap-1.5 text-cyan-400">
-        <Loader2 className="w-3 h-3 animate-spin" /> DOWNLOADING MAP ({mapProg}%)
+        <Loader2 className="w-3 h-3 animate-spin" /> DOWNLOADING MAP ({displayMapProg}%)
       </span>
     );
   };
@@ -296,7 +309,7 @@ export const MultiplayerRaceLoadingScreen: React.FC<MultiplayerRaceLoadingScreen
                       </div>
 
                       <div className="flex items-center gap-3">
-                        {getPlayerStatusLabel(player)}
+                        {getPlayerStatusLabel(player, isMe)}
                         
                         {/* Host only player-removal mechanism */}
                         {isHost && !isMe && (

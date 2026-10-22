@@ -85,10 +85,21 @@ export async function verifyCar(selectedCar: string, onProgress?: (percent: numb
       loader.register((parser) => new GLTFMaterialsPBRSpecularGlossinessExtension(parser));
 
       await new Promise<void>((resolve, reject) => {
+        let done = false;
+        const timer = setTimeout(() => {
+          if (done) return;
+          done = true;
+          try { dracoLoader.dispose(); } catch {}
+          reject(new Error(`Vehicle GLB parsing timed out for ${carMapKey}`));
+        }, 30000);
+
         loader.parse(
           buffer,
           "",
           (gltf) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
             try {
               applyGltfMaterialFix(gltf.scene);
               (gltfModelCache as any)[carMapKey] = gltf.scene;
@@ -102,6 +113,9 @@ export async function verifyCar(selectedCar: string, onProgress?: (percent: numb
             }
           },
           (err) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
             dracoLoader.dispose();
             reject(err);
           }
@@ -157,20 +171,13 @@ export async function updatePlayerReady(roomCode: string, playerId: string, read
  * Waits for all human players in the room to finish loading.
  */
 export async function waitForAllPlayersReady(roomCode: string): Promise<boolean> {
-  const cleanCode = roomCode.toUpperCase().trim();
-  const roomRef = doc(db, "rooms", cleanCode);
-
   try {
-    const snap = await getDoc(roomRef);
-    if (!snap.exists()) return false;
-
-    const data = snap.data() as RoomState;
-    const players = data.players || [];
+    const players = NormalRoomService.getCachedPlayers();
     const humans = players.filter((p) => !p.isAI);
 
     if (humans.length === 0) return false;
 
-    return humans.every((p) => p.mapReady && p.carReady && p.sceneReady && p.ready);
+    return humans.every((p) => p.mapDownloaded && p.carReady && p.sceneReady && p.ready);
   } catch (err) {
     console.error("[AssetLoadingManager] Error waiting for players:", err);
     return false;
@@ -183,13 +190,7 @@ export async function waitForAllPlayersReady(roomCode: string): Promise<boolean>
 export async function startCountdown(roomCode: string): Promise<void> {
   const cleanCode = roomCode.toUpperCase().trim();
   console.log(`[AssetLoadingManager] Initiating countdown for room: ${cleanCode}`);
-  const roomRef = doc(db, "rooms", cleanCode);
-  await updateDoc(roomRef, {
-    status: "countdown",
-    phase: "countdown",
-    countdownStartTime: serverTimestamp(),
-    updatedAt: serverTimestamp()
-  });
+  await NormalRoomService.setRoomStatus(cleanCode, "countdown");
 }
 
 /**
@@ -211,20 +212,17 @@ export async function initializeAssetLoading(
     return;
   }
 
-  // If map and car IDs are not passed, fetch them from the room document
+  // If map and car IDs are not passed, fetch them from the cached room state
   let mapId = selectedMap;
   let carId = selectedCar;
 
   if (!mapId || !carId) {
-    const roomRef = doc(db, "rooms", activeRoomCode);
-    const snap = await getDoc(roomRef);
-    if (snap.exists()) {
-      const data = snap.data() as any;
-      mapId = mapId || data.selectedMap?.id || data.mapType || "map1";
-      carId = carId || data.selectedCar?.id || data.selectedCar || "ferrari";
+    const room = NormalRoomService.getCachedRoom();
+    if (room) {
+      mapId = mapId || room.mapId || "map1";
+      carId = carId || room.selectedCar || "ferrari";
 
-      // If we got player specific carId
-      const playersList = data.players || [];
+      const playersList = NormalRoomService.getCachedPlayers();
       const localP = playersList.find((p: any) => p.uid === activePlayerId || p.id === activePlayerId);
       if (localP && localP.carId) {
         carId = localP.carId;

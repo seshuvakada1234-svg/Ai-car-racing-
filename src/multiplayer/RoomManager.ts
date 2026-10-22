@@ -247,11 +247,18 @@ export class RoomManager {
     console.log(`AI positional update for ${code}`, aiCarsState.length);
   }
 
-  static async closeRoom(code: string): Promise<void> {
-    const cleanCode = code.trim().toUpperCase();
-    const playerId = this.getOrCreatePlayerId();
+  static async leaveRoom(code?: string, uid?: string): Promise<void> {
+    const rawCode = code || this.getCurrentCode();
+    if (!rawCode) return;
+    const cleanCode = RoomValidator.normalizeCode(rawCode);
+    const playerId = uid || this.getCurrentPlayerId();
+    if (!playerId) return;
     await RoomService.leaveRoom(cleanCode, playerId);
     this.clearSession(cleanCode);
+  }
+
+  static async closeRoom(code: string): Promise<void> {
+    await this.leaveRoom(code);
   }
 
   static async deleteRoom(code: string): Promise<void> {
@@ -324,25 +331,37 @@ export class RoomManager {
       difficulty: room.difficulty || "medium",
       laps: room.laps || 3,
       weather: room.weather || "clear",
-      players: (room.players || []).map((p) => ({
-        ...p,
-        id: p.uid || p.id!,
-        nickname: p.playerName || p.nickname || p.name || "Driver",
-        carId: typeof p.carId === "string" ? p.carId : (p.carId as any)?.id || "ferrari",
-        carColor: p.carColor,
-        isHost: p.isHost,
-        isReady: p.ready ?? p.isReady ?? false,
-        isAI: p.isAI,
-        joinedAt: p.joinedAt,
-        position: p.position,
-        velocity: p.velocity,
-        angle: p.angle,
-        speed: p.speed,
-        isDrifting: p.isDrifting,
-        currentLap: p.currentLap,
-        isFinished: p.isFinished,
-        totalDistanceTraveled: p.totalDistanceTraveled,
-      })),
+      players: (room.players || []).map((p) => {
+        const canonicalId = p.uid || p.id!;
+        return {
+          ...p,
+          uid: canonicalId,
+          id: canonicalId,
+          nickname: p.playerName || p.nickname || p.name || "Driver",
+          carId: typeof p.carId === "string" ? p.carId : (p.carId as any)?.id || "ferrari",
+          carColor: p.carColor,
+          isHost: p.isHost,
+          isReady: p.ready ?? p.isReady ?? false,
+          isAI: p.isAI,
+          joinedAt: p.joinedAt,
+          mapReady: p.mapReady,
+          mapProgress: p.mapProgress ?? p.downloadProgress,
+          downloadProgress: p.downloadProgress ?? p.mapProgress,
+          carReady: p.carReady,
+          carProgress: p.carProgress,
+          glbParsing: p.glbParsing,
+          vehicleInitialized: p.vehicleInitialized,
+          sceneReady: p.sceneReady,
+          position: p.position,
+          velocity: p.velocity,
+          angle: p.angle,
+          speed: p.speed,
+          isDrifting: p.isDrifting,
+          currentLap: p.currentLap,
+          isFinished: p.isFinished,
+          totalDistanceTraveled: p.totalDistanceTraveled,
+        };
+      }),
       status: room.status,
       phase: room.status,
       countdown: room.countdown,

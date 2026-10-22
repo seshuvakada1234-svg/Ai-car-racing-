@@ -22,11 +22,13 @@ import { RoomValidator } from "./RoomValidator";
 
 export interface NormalPlayer {
   uid: string;
+  id?: string;
   name?: string;
   playerName: string;
   photoURL: string;
   joinedAt: number;
   ready: boolean;
+  isAI?: boolean;
   selectedCar?: string;
   carId?: string;
   carColor?: string;
@@ -110,6 +112,17 @@ export interface NormalRoom {
 }
 
 export class NormalRoomService {
+  private static cachedRoom: NormalRoom | null = null;
+  private static cachedPlayers: NormalPlayer[] = [];
+
+  static getCachedRoom(): NormalRoom | null {
+    return this.cachedRoom;
+  }
+
+  static getCachedPlayers(): NormalPlayer[] {
+    return this.cachedPlayers;
+  }
+
   /**
    * Generates a completely unique, secure room code and registers the room doc
    */
@@ -184,10 +197,11 @@ export class NormalRoomService {
   static listenToRoom(code: string, callback: (room: NormalRoom | null) => void, onError?: (error: Error) => void) {
     return RoomService.listenToRoom(code, (state) => {
       if (!state) {
+        NormalRoomService.cachedRoom = null;
         callback(null);
         return;
       }
-      callback({
+      const mappedRoom: NormalRoom = {
         roomCode: state.roomCode,
         ownerUid: state.hostId,
         ownerName: state.ownerName || "Host",
@@ -208,7 +222,9 @@ export class NormalRoomService {
         weather: (state as any).weather || (typeof state.selectedMap === "object" && state.selectedMap ? (state.selectedMap as any).weather : "Clear"),
         selectedCarObj: (state as any).selectedCarObj || null,
         selectedMapObj: (state as any).selectedMap && typeof (state as any).selectedMap === "object" ? (state as any).selectedMap : null,
-      });
+      };
+      NormalRoomService.cachedRoom = mappedRoom;
+      callback(mappedRoom);
     }, onError);
   }
 
@@ -322,6 +338,7 @@ export class NormalRoomService {
         });
       });
       list.sort((a, b) => a.joinedAt - b.joinedAt);
+      NormalRoomService.cachedPlayers = list;
       callback(list);
     }, (error) => {
       console.error(`[NormalRoomService] Players subscription failed for ${cleanCode}:`, error);

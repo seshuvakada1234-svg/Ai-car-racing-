@@ -61,6 +61,66 @@ export class VehicleRenderer {
     }
   }
 
+  private createPlayerNameSprite(name: string): THREE.Sprite {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 128;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      // Clear canvas with transparent color
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Measure text width to dynamically size the background box
+      ctx.font = "bold 38px Inter, system-ui, sans-serif";
+      const textMetrics = ctx.measureText(name);
+      const textWidth = textMetrics.width;
+
+      // Draw background pill/box
+      const paddingX = 36;
+      const paddingY = 16;
+      const boxWidth = textWidth + paddingX * 2;
+      const boxHeight = 44 + paddingY * 2;
+      const boxX = (canvas.width - boxWidth) / 2;
+      const boxY = (canvas.height - boxHeight) / 2;
+
+      // Draw semi-transparent dark background with nice rounded corners
+      ctx.fillStyle = "rgba(15, 23, 42, 0.75)";
+      ctx.beginPath();
+      ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 22);
+      ctx.fill();
+
+      // Draw elegant subtle border to make it pop
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Draw beautiful bold white text
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(name, canvas.width / 2, canvas.height / 2);
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      depthTest: false, // Ensures it never clips behind tracks/terrain/cars
+      depthWrite: false,
+      transparent: true,
+    });
+
+    const sprite = new THREE.Sprite(material);
+    // 4:1 aspect ratio matching 512x128
+    sprite.scale.set(3.2, 0.8, 1.0);
+    sprite.position.set(0, 1.85, 0); // Positioned nicely above the car chassis
+    sprite.name = "name_tag";
+    sprite.userData = { currentName: name };
+    return sprite;
+  }
+
   private getGroundHeight(x: number, z: number, terrainManager: any, fallbackY: number): number {
     try {
       this._scratchGroundVec.set(x, fallbackY, z);
@@ -83,6 +143,10 @@ export class VehicleRenderer {
     if (carData.spinners) this.carSpinnersMap.set(carState.id, carData.spinners);
     if (carData.tailLightMat) this.tailLightMatMap.set(carState.id, carData.tailLightMat);
     if (carData.paintMat) this.paintMatMap.set(carState.id, carData.paintMat);
+
+    // Attach dynamic 3D Player Name Tag Sprite
+    const nameTag = this.createPlayerNameSprite(carState.name || "Player");
+    carData.group.add(nameTag);
 
     const carId = carState.carId || "ferrari";
     const isGltfCar = carId === "ferrari" || carId === "bugatti" || carId === "porsche" || 
@@ -150,9 +214,23 @@ export class VehicleRenderer {
       const carGroup = this.carGroupMap.get(c.id);
       if (!carGroup) return;
 
+      // Ensure the name tag sprite exists and is up to date
+      let nameTag = carGroup.getObjectByName("name_tag") as THREE.Sprite;
+      const expectedName = c.name || "Player";
+      if (!nameTag) {
+        nameTag = this.createPlayerNameSprite(expectedName);
+        carGroup.add(nameTag);
+      } else if (nameTag.userData && nameTag.userData.currentName !== expectedName) {
+        carGroup.remove(nameTag);
+        nameTag = this.createPlayerNameSprite(expectedName);
+        carGroup.add(nameTag);
+      }
+
       if (c.id !== "player" && !c.isAI) {
         if (c.position) {
+          console.log("[CLIENT B] State position (c.position):", c.id, c.position);
           carGroup.position.set(c.position.x, c.position.y, c.position.z);
+          console.log("[CLIENT B] carGroup.position immediately after carGroup.position.set(...):", c.id, carGroup.position);
           console.log("[CLIENT B] VehicleRenderer received updated position", c.id, c.position);
         }
         if (c.quaternion) {
@@ -438,6 +516,10 @@ export class VehicleRenderer {
       const isBrakingProc = c.id === "player" ? controls.backward : c.speed < 18 && Math.random() > 0.4;
       const tMat = this.tailLightMatMap.get(c.id);
       if (tMat) tMat.color.set(isBrakingProc ? "#ff111a" : "#770010");
+
+      if (c.id !== "player" && !c.isAI) {
+        console.log("[CLIENT B] carGroup.position at the end of VehicleRenderer.update():", c.id, carGroup.position);
+      }
     });
   }
 }

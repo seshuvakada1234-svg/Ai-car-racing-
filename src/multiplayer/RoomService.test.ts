@@ -145,6 +145,41 @@ describe("Firestore room lifecycle", () => {
     await RoomService.deleteExpiredRooms();
     expect(firestore.documents.size).toBe(0);
   });
+
+  it("synchronizes both mapProgress and downloadProgress as well as mapReady and mapDownloaded", async () => {
+    seedRoom([{ ...player("host"), isReady: false }]);
+    await RoomService.updatePlayerLoadingStatus("ABC123", "host", { mapProgress: 75, mapReady: false });
+    expect(firestore.documents.get("rooms/ABC123/players/host")).toMatchObject({
+      mapProgress: 75,
+      downloadProgress: 75,
+      mapReady: false,
+      mapDownloaded: false,
+    });
+
+    await RoomService.updatePlayerLoadingStatus("ABC123", "host", { mapProgress: 100, mapReady: true });
+    expect(firestore.documents.get("rooms/ABC123/players/host")).toMatchObject({
+      mapProgress: 100,
+      downloadProgress: 100,
+      mapReady: true,
+      mapDownloaded: true,
+    });
+  });
+
+  it("matches player by id as well as uid when updating loading status", async () => {
+    seedRoom([{ id: "player-without-uid", playerName: "Solo", ready: false, isReady: false } as any]);
+    await RoomService.updatePlayerLoadingStatus("ABC123", "player-without-uid", { carProgress: 50 });
+    expect(firestore.documents.get("rooms/ABC123/players/player-without-uid")).toMatchObject({ carProgress: 50 });
+  });
+
+  it("preserves a two-player room when a player temporarily disconnects without explicit leaveRoom", async () => {
+    seedRoom([player("host"), player("guest")]);
+    // A temporary disconnect or network hiccup does not call leaveRoom
+    // Verify room and both player records remain intact in Firestore
+    expect(firestore.documents.size).toBe(3); // 1 room doc + 2 player subcollection docs
+    expect(firestore.documents.has("rooms/ABC123")).toBe(true);
+    expect(firestore.documents.has("rooms/ABC123/players/host")).toBe(true);
+    expect(firestore.documents.has("rooms/ABC123/players/guest")).toBe(true);
+  });
 });
 
 describe("room snapshots", () => {

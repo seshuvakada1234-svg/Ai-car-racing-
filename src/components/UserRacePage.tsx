@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useMultiplayer } from "../hooks/useMultiplayer";
@@ -28,6 +28,8 @@ import { verifyCar, getNormalizedCarKey } from "../services/assetLoadingManager"
 import { Racing2World } from "../world/Racing2World";
 import { buildMultiplayerLineup } from "../multiplayer/raceInitialization";
 import { connectVehicleSocket, sendVehicleUpdate, triggerWsStartRace } from "../network/vehicleSocket";
+import { CarLoader } from "../vehicles/CarLoader";
+import { auth } from "../lib/firebase";
 import {
   startCountdown,
   beginRace,
@@ -161,9 +163,23 @@ export const RaceScene: React.FC<{ onRetry: () => void }> = ({ onRetry }) => {
 
   const [vehicleInitProgress, setVehicleInitProgress] = useState(0);
   const [vehicleInitReady, setVehicleInitReady] = useState(false);
+  const [subPlayers, setSubPlayers] = useState<any[]>([]);
 
-  const allPlayersReadyTriggered = !!mp.room?.players.length && mp.room.players.filter((p) => !p.isAI)
-    .every((p) => p.mapReady && p.carReady && p.sceneReady && p.ready);
+  const displayedPlayers = useMemo(() => {
+    const subMap = new Map((subPlayers || []).map((p) => [p.uid || p.id, p]));
+    const baseList = mp.room?.players || [];
+    if (baseList.length === 0 && subPlayers.length > 0) {
+      return subPlayers;
+    }
+    return baseList.map((bp) => {
+      const id = bp.uid || bp.id;
+      const sub = subMap.get(id);
+      return sub ? { ...bp, ...sub } : bp;
+    });
+  }, [mp.room?.players, subPlayers]);
+
+  const allPlayersReadyTriggered = !!displayedPlayers.length && displayedPlayers.filter((p) => !p.isAI)
+    .every((p) => (p.mapReady === true || p.mapDownloaded === true) && (p.carReady === true || p.carProgress === 100) && p.sceneReady && p.ready);
   const [countdownStarted, setCountdownStarted] = useState(false);
 
   const [showExitDialog, setShowExitDialog] = useState(false);
@@ -311,6 +327,11 @@ export const RaceScene: React.FC<{ onRetry: () => void }> = ({ onRetry }) => {
 
   // 2. Retry handler
   const handleRetry = () => {
+    console.log("[Race Init] Retrying race initialization for player:", activePlayerId);
+    CarLoader.resetFailures();
+    resetLoadingRef.current = null;
+    setInitTimeoutTriggered(false);
+    setErrorMessage(null);
     mp.retryRoom();
     onRetry();
   };
@@ -341,11 +362,16 @@ export const RaceScene: React.FC<{ onRetry: () => void }> = ({ onRetry }) => {
             setMapDownloadProgress(progress.percentage);
             setDownloadedMB(progress.bytesLoaded / 1024 / 1024);
             setTotalMB((progress.bytesTotal || 0) / 1024 / 1024);
+            console.log(
+              `[Map Download Diagnostic] Room: ${normalizedCode}, Firebase UID: ${auth.currentUser?.uid || "anon"}, ` +
+              `Doc ID: ${activePlayerId}, Source: ${progress.source || "cache/network"}, ` +
+              `Progress: ${progress.percentage}%, Stage: ${progress.stage || "download"}`
+            );
             if (Date.now() - lastWrite >= 1000 && progress.percentage < 100) {
               lastWrite = Date.now();
               writes = writes.then(async () => {
                 if (active) await NormalRoomService.updatePlayerLoadingStatus(normalizedCode, activePlayerId, { mapProgress: progress.percentage });
-              }).catch((error) => console.error("[Race Init] Map progress write failed:", error));
+              }).catch((error) => console.error(`[Map Download Diagnostic Write Failure] Room: ${normalizedCode}, Firebase UID: ${auth.currentUser?.uid || "anon"}, Doc ID: ${activePlayerId}:`, error));
             }
           });
         }
@@ -361,6 +387,7 @@ export const RaceScene: React.FC<{ onRetry: () => void }> = ({ onRetry }) => {
         setMapDownloadProgress(100);
         setIsCheckingCache(false);
       } catch (error) {
+        console.error(`[Map Download Diagnostic Error] Room: ${normalizedCode}, Firebase UID: ${auth.currentUser?.uid || "anon"}, Doc ID: ${activePlayerId}:`, error);
         if (active) reportInitError("mapLoaded", error);
       }
     };
@@ -464,9 +491,12 @@ export const RaceScene: React.FC<{ onRetry: () => void }> = ({ onRetry }) => {
     let active = true;
 
     console.log("[Race Init] Resetting player loading status for a fresh race session...");
+    const playerRecord = roomRef.current?.players?.find((p) => (p.uid || p.id) === activePlayerId);
+    const alreadyMapReady = !!(playerRecord?.mapReady || playerRecord?.mapDownloaded);
+
     resetLoadingRef.current ??= NormalRoomService.updatePlayerLoadingStatus(normalizedCode, activePlayerId, {
-      mapReady: false,
-      mapProgress: 0,
+      mapReady: alreadyMapReady,
+      mapProgress: alreadyMapReady ? 100 : 0,
       carReady: false,
       carProgress: 0,
       glbParsing: false,
@@ -476,7 +506,15 @@ export const RaceScene: React.FC<{ onRetry: () => void }> = ({ onRetry }) => {
       ready: false
     });
     resetLoadingRef.current.then(() => {
-      if (active) setLoadingStatusReset(true);
+      if (active) {
+        if (alreadyMapReady) {
+          setMapVerified(true);
+          setMapReadyLocal(true);
+          setMapDownloadReady(true);
+          setMapDownloadProgress(100);
+        }
+        setLoadingStatusReset(true);
+      }
     }).catch((err) => {
       if (active) reportInitError("firestoreRoomLoaded", err);
     });
@@ -542,9 +580,9 @@ export const RaceScene: React.FC<{ onRetry: () => void }> = ({ onRetry }) => {
     const isHost = mp.room.hostId === activePlayerId;
     if (!isHost) return;
 
-    const humans = mp.room.players.filter((p: any) => !p.isAI);
+    const humans = displayedPlayers.filter((p: any) => !p.isAI);
     const everyoneReady = humans.length > 0 && humans.every(
-      (p: any) => p.mapReady === true && p.carReady === true && p.sceneReady === true
+      (p: any) => (p.mapReady === true || p.mapDownloaded === true) && (p.carReady === true || p.carProgress === 100) && p.sceneReady === true
     );
 
     if (mp.room.status !== "racing" || mp.room.raceStarted) {
@@ -563,7 +601,7 @@ export const RaceScene: React.FC<{ onRetry: () => void }> = ({ onRetry }) => {
         console.error("Failed to update room status to countdown:", err);
       });
     }
-  }, [mp.room, mp.playerId, initTimeoutTriggered]);
+  }, [mp.room, mp.playerId, initTimeoutTriggered, displayedPlayers]);
 
   // Listen for room status and local loading readiness to manage game phase and loading screen
   useEffect(() => {
@@ -716,6 +754,7 @@ export const RaceScene: React.FC<{ onRetry: () => void }> = ({ onRetry }) => {
   useEffect(() => {
     if (!mp.room?.roomCode) return;
     const unsub = NormalRoomService.listenToPlayers(mp.room.roomCode, (playersList) => {
+      setSubPlayers(playersList);
       const activePlayerId = mp.playerId || RoomManager.getCurrentPlayerId();
       latestPlayerStates.current = new Map(playersList.map((p) => [p.uid, p]));
       playersList.forEach((p) => {
@@ -735,6 +774,7 @@ export const RaceScene: React.FC<{ onRetry: () => void }> = ({ onRetry }) => {
 
     return () => {
       unsub();
+      setSubPlayers([]);
       remotePlayersMapRef.current.clear();
       latestPlayerStates.current.clear();
     };
@@ -1348,7 +1388,7 @@ export const RaceScene: React.FC<{ onRetry: () => void }> = ({ onRetry }) => {
       {loadingMultiplayer && (
         <MultiplayerRaceLoadingScreen
           roomCode={mp.room?.roomCode || mp.room?.code || ""}
-          players={mp.room?.players || []}
+          players={displayedPlayers}
           currentUserId={mp.playerId || RoomManager.getCurrentPlayerId() || ""}
           isHost={mp.room?.hostId === (mp.playerId || RoomManager.getCurrentPlayerId())}
           onRemovePlayer={handleRemovePlayer}

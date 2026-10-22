@@ -6,6 +6,13 @@ let activeOnRaceStart: ((startTime: number) => void) | null = null;
 let activeCleanup: (() => void) | null = null;
 
 /**
+ * Returns whether the vehicle WebSocket relay is currently connected and open.
+ */
+export function isVehicleSocketConnected(): boolean {
+  return socket !== null && socket.readyState === WebSocket.OPEN;
+}
+
+/**
  * Triggers server-authoritative race start via WebSocket
  */
 export function triggerWsStartRace(): void {

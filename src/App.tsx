@@ -872,20 +872,8 @@ function AppBody() {
         });
       }
 
-      // Auto-delete the room if in multiplayer and this client is the host
-      if (mp.room && mp.room.hostId === mp.playerId) {
-        const finishedRoomCode = mp.room.roomCode;
-        // Wait 3 seconds so regular players can receive final state updates before deletion
-        setTimeout(async () => {
-          try {
-            // Capture the finished room: a delayed callback must never delete a
-            // different room the user has joined in the meantime.
-            await NormalRoomService.deleteRoom(finishedRoomCode);
-          } catch (e) {
-            console.error("Error auto-deleting finished room:", e);
-          }
-        }, 3000);
-      }
+      // In multiplayer, keep the room intact so non-host racers can finish the race
+      // and view final stats. Rooms are cleaned up upon explicit exit or room expiration.
     } catch (e) {
       console.error("Async operation failed during race finish flow. Navigating to Garage:", e);
       setPhase("menu");

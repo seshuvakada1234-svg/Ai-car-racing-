@@ -197,7 +197,7 @@ export const WaitingLobbyPage: React.FC = () => {
   const normalizedCode = (roomCode || "").toUpperCase().trim();
   const isHost = room && profile ? room.ownerUid === profile.uid : false;
   const isMember = !!profile?.uid && !!room?.players.includes(profile.uid);
-  const allPlayersReady = room ? (mapReadyLocal && players.length === (room.maxPlayers || 3) && players.every(p => p.ready === true && p.mapReady === true)) : false;
+  const allPlayersReady = room ? (mapReadyLocal && players.length >= 2 && players.every(p => p.ready === true && (p.mapReady === true || p.mapDownloaded === true))) : false;
   const allReady = allPlayersReady;
 
   // 1. Real-time Firestore Subscriptions

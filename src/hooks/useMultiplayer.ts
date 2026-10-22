@@ -2,6 +2,7 @@ import { useMemo, useState, useCallback } from "react";
 import { RoomData, RoomManager } from "../multiplayer/RoomManager";
 import { PlayerManager, GridEntry } from "../multiplayer/PlayerManager";
 import { useRoom } from "./useRoom";
+import { isVehicleSocketConnected } from "../network/vehicleSocket";
 
 export interface UseMultiplayerReturn {
   // Room states
@@ -115,8 +116,13 @@ export function useMultiplayer(roomOverride?: RoomData | null, roomCode?: string
 
   const sendLocalCar = useCallback(async (car: any) => {
     const now = Date.now();
-    // Throttle to 50ms (exactly 20 updates per second) as requested
-    if (now - lastLocalSend < 50) return;
+    // Throttle Firestore updates depending on WebSocket connection status to avoid exceeding Firestore Quota limits.
+    // If WebSockets are connected, Firestore updates are unnecessary redundancy, so throttle very heavily (15 seconds).
+    // If WebSockets are not connected (fallback), throttle to 5 seconds.
+    const isWsActive = isVehicleSocketConnected();
+    const throttleLimit = isWsActive ? 15000 : 5000;
+
+    if (now - lastLocalSend < throttleLimit) return;
     lastLocalSend = now;
 
     const code = RoomManager.getCurrentCode();
@@ -134,7 +140,8 @@ export function useMultiplayer(roomOverride?: RoomData | null, roomCode?: string
       `position: ${JSON.stringify(pos)}\n` +
       `rotation: ${rot}\n` +
       `speed: ${sp}\n` +
-      `timestamp: ${now}`
+      `timestamp: ${now}\n` +
+      `wsActive: ${isWsActive}`
     );
 
     try {

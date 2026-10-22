@@ -30,6 +30,7 @@ vi.mock("./GameCanvas", () => ({ GameCanvas: () => <div data-testid="game-canvas
 vi.mock("./HUD", () => ({ HUD: () => null }));
 vi.mock("./MultiplayerRaceLoadingScreen", () => ({ MultiplayerRaceLoadingScreen: (props: any) => <div data-testid="race-loader" data-map-ready={props.mapDownloadReady} data-parsed={props.glbParsed} /> }));
 import { UserRacePage } from "./UserRacePage";
+import { CarLoader } from "../vehicles/CarLoader";
 
 function showRace() {
   return render(<MemoryRouter initialEntries={["/race/ABC123"]}><Routes><Route path="/race/:roomCode" element={<UserRacePage />} /></Routes></MemoryRouter>);
@@ -70,5 +71,15 @@ describe("race initialization failures and retry", () => {
     expect(mocks.map).toHaveBeenCalledTimes(2);
     expect(mocks.retry).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("race-loader")).toHaveAttribute("data-parsed", "true");
+  });
+
+  it("resets CarLoader failures when Retry is clicked", async () => {
+    const resetSpy = vi.spyOn(CarLoader, "resetFailures");
+    mocks.map.mockRejectedValueOnce(new Error("Network glitch")).mockResolvedValueOnce({ buffer: makeGlb() });
+    showRace();
+    await screen.findByText("Network glitch");
+    fireEvent.click(screen.getByText("RETRY INIT"));
+    expect(resetSpy).toHaveBeenCalled();
+    resetSpy.mockRestore();
   });
 });
