@@ -357,10 +357,10 @@ export const WaitingLobbyPage: React.FC = () => {
   useEffect(() => {
     if (!room) return;
 
-    // If anyone left or isn't ready during starting, host resets back to waiting
-    if (room.status === "starting" && !allReady) {
+    // If anyone left or isn't ready during starting or countdown, host resets back to waiting
+    if ((room.status === "starting" || room.status === "countdown") && !allReady) {
       if (isHost) {
-        console.log("A player left or isn't ready anymore! Resetting status to waiting.");
+        console.log("A player left or cancelled readiness! Resetting status to waiting.");
         NormalRoomService.setRoomStatus(normalizedCode, "waiting").catch((err) => {
           console.error("Error resetting room status:", err);
         });
@@ -491,16 +491,49 @@ export const WaitingLobbyPage: React.FC = () => {
     }
   };
 
-  // Toggle ready status for joined player
+  const [isTogglingReady, setIsTogglingReady] = useState(false);
+  const [isStartingRace, setIsStartingRace] = useState(false);
+
+  useEffect(() => {
+    if (!allPlayersReady) {
+      setIsStartingRace(false);
+    }
+  }, [allPlayersReady]);
+
+  // Toggle ready status for joined player (both Host and Guest)
   const handleReadyToggle = async () => {
-    if (!profile) return;
-    const myPlayerRecord = players.find(p => p.uid === profile.uid);
+    if (!profile || isTogglingReady) return;
+    if ((room?.mapId === "race2map" || room?.mapId === "racing2") && !mapReadyLocal) {
+      toast.error("Please wait for map download to complete before readying up.");
+      return;
+    }
+    const myPlayerRecord = players.find(p => (p.uid || p.id) === profile.uid);
     if (!myPlayerRecord) return;
     const newReadyState = !myPlayerRecord.ready;
+    setIsTogglingReady(true);
     try {
       await NormalRoomService.toggleReady(normalizedCode, profile.uid, newReadyState);
+      if (!newReadyState && isHost && (room?.status === "starting" || room?.status === "countdown")) {
+        await NormalRoomService.setRoomStatus(normalizedCode, "waiting").catch((e) => console.error(e));
+      }
     } catch (err) {
       console.error("Toggle ready failed:", err);
+      toast.error(err instanceof Error ? err.message : "Could not toggle ready status");
+    } finally {
+      setIsTogglingReady(false);
+    }
+  };
+
+  // Host starts the race when all players are ready
+  const handleStartRace = async () => {
+    if (!isHost || !allPlayersReady || isStartingRace) return;
+    setIsStartingRace(true);
+    try {
+      await NormalRoomService.setRoomStatus(normalizedCode, "racing");
+    } catch (err) {
+      console.error("[Lobby] Failed to start race:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to start race");
+      setIsStartingRace(false);
     }
   };
 
@@ -544,16 +577,16 @@ export const WaitingLobbyPage: React.FC = () => {
   const totalCount = players.length;
 
   let bottomStatusText = "WAITING FOR PLAYERS...";
-  if (players.length < (room.maxPlayers || 3)) {
-    bottomStatusText = `WAITING... NEED ${(room.maxPlayers || 3) - players.length} MORE`;
+  if (players.length < 2) {
+    bottomStatusText = `WAITING... NEED AT LEAST 2 PLAYERS`;
   } else if (room.status === "countdown" || room.status === "starting") {
     bottomStatusText = "COUNTDOWN IN PROGRESS";
   } else if (!allReady) {
-    bottomStatusText = "WAITING FOR GRID READINESS...";
+    bottomStatusText = `WAITING FOR GRID READINESS (${readyCount}/${totalCount} READY)...`;
   } else if (allReady && isHost) {
     bottomStatusText = "ALL SYSTEMS READY • LAUNCH THE RACE";
   } else if (allReady && !isHost) {
-    bottomStatusText = "WAITING FOR HOST LAUNCH SIGNAL...";
+    bottomStatusText = "ALL PLAYERS READY • WAITING FOR HOST TO START...";
   }
 
   return (
@@ -610,43 +643,60 @@ export const WaitingLobbyPage: React.FC = () => {
             READY: <span className="text-cyan-400 font-black ml-1">{readyCount}/{totalCount}</span>
           </div>
 
-          {/* Large Host Start Race or Guest Ready button */}
-          {isHost ? (
+          {/* Ready Button for any joined racer (both Host and Guest) */}
+          {profile && players.some(p => (p.uid || p.id) === profile.uid) && (
             <button
-              onClick={() => {
-                if (allPlayersReady) {
-                  NormalRoomService.setRoomStatus(normalizedCode, "racing");
-                }
-              }}
-              disabled={!allPlayersReady}
+              onClick={handleReadyToggle}
+              disabled={isTogglingReady || ((room?.mapId === "race2map" || room?.mapId === "racing2") && !mapReadyLocal)}
               className={`px-3 py-1 font-black uppercase text-[9px] tracking-wider rounded-md transition flex items-center justify-center gap-1 shadow-md shrink-0 h-7 ${
-                allPlayersReady
+                isTogglingReady || ((room?.mapId === "race2map" || room?.mapId === "racing2") && !mapReadyLocal)
+                  ? "bg-slate-900 border border-white/5 text-slate-500 cursor-not-allowed"
+                  : players.find(p => (p.uid || p.id) === profile.uid)?.ready
+                    ? "bg-gradient-to-r from-emerald-600 to-teal-500 text-white border border-emerald-500/20 active:scale-95 cursor-pointer hover:brightness-110"
+                    : "bg-gradient-to-r from-rose-600 to-pink-500 text-white border border-rose-500/20 active:scale-95 cursor-pointer hover:brightness-110"
+              }`}
+              title={
+                (room?.mapId === "race2map" || room?.mapId === "racing2") && !mapReadyLocal
+                  ? "Map download must complete before readying up"
+                  : players.find(p => (p.uid || p.id) === profile.uid)?.ready
+                    ? "Cancel readiness"
+                    : "Confirm you are ready to race"
+              }
+            >
+              {isTogglingReady ? (
+                <Loader2 className="w-2.5 h-2.5 animate-spin text-white" />
+              ) : (
+                <CheckCircle2 className="w-2.5 h-2.5" />
+              )}
+              <span>
+                {players.find(p => (p.uid || p.id) === profile.uid)?.ready ? "READY (CANCEL)" : "READY UP"}
+              </span>
+            </button>
+          )}
+
+          {/* Host Only: Start Race button shown alongside Ready Up */}
+          {isHost && (
+            <button
+              onClick={handleStartRace}
+              disabled={!allPlayersReady || isStartingRace}
+              className={`px-3 py-1 font-black uppercase text-[9px] tracking-wider rounded-md transition flex items-center justify-center gap-1 shadow-md shrink-0 h-7 ${
+                allPlayersReady && !isStartingRace
                   ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-emerald-500/20 hover:brightness-110 active:scale-95 cursor-pointer"
                   : "bg-slate-900 border border-white/5 text-slate-500 cursor-not-allowed"
               }`}
+              title={
+                !allPlayersReady
+                  ? "All racers must be ready with completed map downloads before starting"
+                  : "Start the race"
+              }
             >
-              {allPlayersReady ? <Play className="w-2.5 h-2.5" /> : <Loader2 className="w-2.5 h-2.5 animate-spin text-slate-500" />}
-              <span>{allPlayersReady ? "START RACE" : "WAITING"}</span>
+              {isStartingRace ? (
+                <Loader2 className="w-2.5 h-2.5 animate-spin text-slate-400" />
+              ) : (
+                <Play className="w-2.5 h-2.5 fill-current" />
+              )}
+              <span>{isStartingRace ? "STARTING..." : "START RACE"}</span>
             </button>
-          ) : (
-            profile && players.some(p => p.uid === profile.uid) && (
-              <button
-                onClick={handleReadyToggle}
-                disabled={(room?.mapId === "race2map" || room?.mapId === "racing2") && !mapReadyLocal}
-                className={`px-3 py-1 font-black uppercase text-[9px] tracking-wider rounded-md transition flex items-center justify-center gap-1 shadow-md shrink-0 h-7 ${
-                  (room?.mapId === "race2map" || room?.mapId === "racing2") && !mapReadyLocal
-                    ? "bg-slate-900 border border-white/5 text-slate-500 cursor-not-allowed"
-                    : players.find(p => p.uid === profile.uid)?.ready
-                      ? "bg-gradient-to-r from-emerald-600 to-teal-500 text-white border border-emerald-500/20 active:scale-95 cursor-pointer"
-                      : "bg-gradient-to-r from-rose-600 to-pink-500 text-white border border-rose-500/20 active:scale-95 cursor-pointer"
-                }`}
-              >
-                <CheckCircle2 className="w-2.5 h-2.5" />
-                <span>
-                  {players.find(p => p.uid === profile.uid)?.ready ? "READY(CANCEL)" : "READY UP"}
-                </span>
-              </button>
-            )
           )}
 
           {/* Disband/Leave button */}
@@ -739,7 +789,7 @@ export const WaitingLobbyPage: React.FC = () => {
                       {/* Map Status indicator per player */}
                       {(room?.mapId === "race2map" || room?.mapId === "racing2") && (
                         <div className="shrink-0 w-14 text-right">
-                          {plr.mapReady ? (
+                          {(plr.mapReady || plr.mapDownloaded) ? (
                             <span className="text-[6px] font-bold text-emerald-400 font-mono flex items-center gap-0.5 select-none justify-end">
                               <span className="w-1 h-1 rounded-full bg-emerald-400" />
                               MAP

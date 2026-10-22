@@ -573,7 +573,7 @@ export class RoomService {
         }
         
         const updatedPlayers = players.map((p) => {
-          if (p.uid === playerId) {
+          if ((p.uid || p.id) === playerId) {
             return {
               ...p,
               ready: isReady,
